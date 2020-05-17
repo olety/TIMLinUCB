@@ -266,7 +266,11 @@ $RECYCLE.BIN/
 
 # End of https://www.gitignore.io/api/linux,macos,clion,python,windows
 
-*.pkl # Python pickles
+# Python pickles
+*.pkl
+*.pickle
+
+# Graph data files
 *.csv
 *.inf
 
