@@ -1,5 +1,15 @@
 # TIMLinUCB
 
+TIMLinUCB - an algorithm for Online Influence Maximization in Temporal Network.
+
+## What?
+
+## Why?
+
+## TIMLinUCB
+
+## IMLinUCB
+
 ## References
 
 Wen, Zheng, et al. "Online influence maximization under independent cascade model with semi-bandit feedback." Advances in neural information processing systems. 2017. [arXiv](https://arxiv.org/abs/1605.06593)
