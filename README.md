@@ -10,11 +10,19 @@ TIMLinUCB - an algorithm for Online Influence Maximization in Temporal Networks.
 
 ## TIMLinUCB
 
-![](pictures/toim.png)
+<p align="center">
+<img src="pictures/toim.png" alt="Online Influence Maximization in Temporal Networks algorithm" width="200" /><br/>
+<sup>TIMLinUCB's structure (simplified)</sup>
+</p>
+
 
 ## IMLinUCB
 
-![](pictures/oim.png)
+<p align="center">
+<img src="pictures/oim.png" alt="Online Influence Maximization algorithm" width="200" /><br/>
+<sup>IMLinUCB's structure (simplified)</sup>
+</p>
+
 
 ## References
 
