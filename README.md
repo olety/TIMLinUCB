@@ -1,6 +1,6 @@
 # TIMLinUCB
 
-TIMLinUCB - an algorithm for Online Influence Maximization in Temporal Network.
+TIMLinUCB - an algorithm for Online Influence Maximization in Temporal Networks.
 
 ## What?
 
