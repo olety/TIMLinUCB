@@ -1,25 +1,20 @@
+#! /usr/local/bin/python3
 from functools import partial
 import logging
-from scipy.special import expit
 import pandas as pd
 import numpy as np
-import scipy as sc
-import scipy.sparse as sparse
 import pickle
+from scipy.special import expit
 import re
 import sys
-import scipy.sparse.linalg
-from tqdm import tqdm, trange
+from tqdm import tqdm
 from subprocess import Popen, PIPE
 import os
-import networkx as nx
-import itertools
-from heapq import heappush, heappop
+import matplotlib.pyplot as plt
 from copy import deepcopy
 import random
-import time
 
-# %% Functions
+# %% ---- Functions ----
 
 
 def run_ic_eff(df_graph, seed_nodes):
@@ -108,6 +103,9 @@ def oracle(df,
     epsilon -- hyperparameter
     Output: T -- The k highest influencers
     """
+    if not os.path.exists(temp_dir):
+        os.makedirs(temp_dir)
+
     df.to_csv(os.path.join(temp_dir, "graph_ic.inf"),
               index=False,
               sep=" ",
@@ -189,7 +187,8 @@ def oim_node2vec(
     c=0.1,
     epsilon=0.4,
     num_repeats=30,
-    num_repeats_regret=20,
+    num_repeats_regret_algo=20,
+    num_repeats_regret_true=20,
     num_nodes_tim=-1,
     oracle=oracle,
 ):
@@ -204,6 +203,20 @@ def oim_node2vec(
     s_true = sorted(
         oracle(df[["source", "target", "probab"]], num_nodes_tim, num_edges_t,
                num_inf, epsilon))
+    # Gathering the stats for the "true" seed set
+    all_true_nodes = []
+    all_true_edges = []
+    all_true_obs = []
+    for k in range(num_repeats_regret_true):
+        true_act_nodes, true_act_edges, true_obs_edges = run_ic_eff(df, s_true)
+        all_true_nodes.append(true_act_nodes)
+        all_true_edges.append(true_act_edges)
+        all_true_obs.append(true_obs_edges)
+
+    # Means for nodes and activated edges
+    mean_true_nodes = np.mean([len(i) for i in all_true_nodes])
+    mean_true_edges = np.mean([len(i) for i in all_true_edges])
+    mean_true_obs = np.mean([len(i) for i in all_true_obs])
 
     # b, M_inv - used by IMLinUCB
     b = np.zeros((num_feats, 1))
@@ -228,7 +241,9 @@ def oim_node2vec(
         for i in range(num_edges_t):
             x_e = df_feats.loc[i].values
             xMx = (x_e @ m_inv @ x_e.T)  # .clip(min=0)
-            u_e.append(np.clip(x_e @ theta + c * np.sqrt(xMx), 0, 1))
+            # u_e.append(np.clip(x_e @ theta + c * np.sqrt(xMx), 0, 1))
+            u_e.append(expit(x_e @ theta + c * np.sqrt(xMx)))
+
         u_e = np.array(u_e)
 
         # ---- Step 2 - Evaluating the performance ----
@@ -241,31 +256,21 @@ def oim_node2vec(
         # Observing edge-level feedback
         df["probab"] = true_weights
 
-        all_true_nodes = []
-        all_true_edges = []
-        # all_true_obs = []
         all_algo_nodes = []
         all_algo_edges = []
         all_algo_obs = []
-        for k in range(num_repeats_regret):
-            true_act_nodes, true_act_edges, true_obs_edges = run_ic_eff(
-                df, s_true)
+        for k in range(num_repeats_regret_algo):
             algo_act_nodes, algo_act_edges, algo_obs_edges = run_ic_eff(
                 df, s_oracle)
-            all_true_nodes.append(true_act_nodes)
-            all_true_edges.append(true_act_edges)
             all_algo_nodes.append(algo_act_nodes)
             all_algo_edges.append(algo_act_edges)
-            # all_true_obs.append(true_obs_edges)
             all_algo_obs.append(algo_obs_edges)
 
         # Mean node counts
-        mean_true_nodes = np.mean([len(i) for i in all_true_nodes])
         mean_algo_nodes = np.mean([len(i) for i in all_algo_nodes])
-
         # Mean activated edge counts
-        mean_true_edges = np.mean([len(i) for i in all_true_edges])
         mean_algo_edges = np.mean([len(i) for i in all_algo_edges])
+        mean_algo_obs = np.mean([len(i) for i in all_algo_obs])
 
         # Used for updating M and b later
         all_algo_edges = np.unique(np.concatenate(all_algo_edges))
@@ -276,12 +281,14 @@ def oim_node2vec(
 
         logging.debug(f"True seeds: {s_true}")
         logging.debug(f"Algo   seeds: {s_oracle}")
+        logging.debug("Diff between true and algo seeds: "
+                      f"{len(np.setdiff1d(s_true, s_oracle))}")
         logging.debug(f"True reward: {mean_true_nodes}")
         logging.debug(f"Algo   reward: {mean_algo_nodes}")
         logging.debug(f"Best algo reward: {reward_best}")
         logging.debug(f"Regrets: {regrets}")
         logging.debug(f"Edge regrets: {regrets_edges}")
-        # logging.debug(f"Observed diff: {len(all_true_obs) - len(all_algo_obs)}")
+        logging.debug(f"Observed diff: {mean_true_obs - mean_algo_obs}")
         logging.debug(f"Algo weights {u_e[80:90]}".replace("\n", ""))
         logging.debug(f"Real weights {true_weights[80:90]}".replace("\n", ""))
 
@@ -327,22 +334,13 @@ def oim_node2vec(
     return return_dict
 
 
-# %% Finding the required directories
+# %% ---- Initial setup ----
 
-# TIM setup
-TEMP_DIR = "temp_dir"
-if not os.path.exists(TEMP_DIR):
-    os.makedirs(TEMP_DIR)
+# Fancy plots in matplotlib and pandas
+random.seed(42)
+plt.style.use('ggplot')
 
-PATTERN = re.compile("Selected k SeedSet: (.+?) \\n")
-
-# Datasets
-DATASET_DIR = os.path.join("..", "Datasets")
-if not os.path.exists(DATASET_DIR):
-    print("Can't find the dataset directory!")
-DATASET_FACEBOOK = os.path.join(DATASET_DIR, "fb-wosn-friends")
-
-# %% setting up logging
+# Setting up logging
 VERBOSE = True
 LOGGING_FMT = '%(levelname)s | %(asctime)s | line %(lineno)s | %(funcName)s | %(message)s'
 LOGGING_DATEFMT = '%H:%M:%S'
@@ -357,8 +355,14 @@ if VERBOSE:
 else:
     logging_conf(level=logging.INFO)
 
-# %% Running the code
-random.seed(42)
+# Datasets
+DATASET_DIR = os.path.join("..", "Datasets")
+if not os.path.exists(DATASET_DIR):
+    print("Can't find the dataset directory!")
+DATASET_FACEBOOK = os.path.join(DATASET_DIR, "fb-wosn-friends")
+
+# %% ---- Running the code ----
+
 logging.debug("Getting the graph...")
 df_friend = pd.read_csv(
     os.path.join(DATASET_FACEBOOK, "fb-wosn-friends-clean.edges"),
@@ -376,12 +380,13 @@ df_friend = df_friend.sort_values(by=["timestamp", "source", "target"])
 df_friend = df_friend[["source", "target", "day"]]
 nodes = np.sort(
     np.unique(np.hstack((df_friend["source"], df_friend["target"]))))
+
 # Getting the true weights
 logging.debug("Generating \"true\" activation probabilities...")
 df_friend['probab'] = np.random.uniform(0, 0.1, size=df_friend.shape[0])
 # df_friend['probab'] = np.random.uniform(0, 1, size=df_friend.shape[0])
 
-# %% OIM - NODE2VEC - Setup
+# %% ---- OIM - Node2Vec - Setup ----
 NUM_FEATS = 20
 # Getting node embeddings
 logging.debug("Getting node embeddings...")
@@ -398,7 +403,7 @@ for row in tqdm(df_friend.itertuples()):
                     df_emb.loc[row.target].values)
 df_feats = pd.DataFrame(df_feats)
 
-#%%
+# %% ---- OIM - Node2Vec - Running ----
 # Getting a graph of one time slice df_t
 logging.debug("Creating df_t and df_feats_t")
 t = np.sort(np.unique(df_friend["day"]))[55:56][-1]
@@ -408,5 +413,45 @@ df_feats_t = df_t["index"].apply(lambda x: df_feats.loc[x])
 # Running the OIM algorithm
 result_oim = oim_node2vec(df_t,
                           df_feats_t,
-                          num_repeats_regret=5,
+                          num_repeats_regret_algo=30,
+                          num_repeats_regret_true=30,
                           num_nodes_tim=nodes[-1])
+logging.debug(
+    "The algorithm selected "
+    f"{10-len(np.setdiff1d(result_oim['s_true'], result_oim['s_best']))}/10"
+    " true seed nodes")
+
+with open('oim.pickle', 'wb') as f:
+    pickle.dump(result_oim, f, protocol=pickle.HIGHEST_PROTOCOL)
+
+# %% ---- OIM - Node2Vec - Plotting regret ----
+ax = pd.DataFrame(result_oim["regrets"]).plot(title="Regrets over time")
+_ = ax.set_xlabel("Time")
+_ = ax.set_ylabel("Avg regret (number of nodes)")
+plt.show()
+
+# %% Cumulative regret
+ax = pd.DataFrame(
+    result_oim["regrets"]).cumsum().plot(title="Cumulative regret over time")
+_ = ax.set_xlabel("Time")
+_ = ax.set_ylabel("Cumulative regret (number of nodes)")
+plt.show()
+
+# %% ---- OIM - Node2Vec - Grid parameter search ----
+results_grid = []
+for epsilon in tqdm([0.1, 0.5, 1]):
+    for c in tqdm([0.01, 0.1, 1]):
+        for sigma in tqdm([0.1, 1, 5, 10]):
+            results_grid.append(
+                oim_node2vec(df_t,
+                             df_feats_t,
+                             num_repeats_regret_true=50,
+                             num_nodes_tim=nodes[-1],
+                             c=c,
+                             sigma=sigma,
+                             epsilon=epsilon))
+
+with open('grid.pickle', 'wb') as f:
+    pickle.dump(results_grid, f, protocol=pickle.HIGHEST_PROTOCOL)
+
+print(results_grid)
