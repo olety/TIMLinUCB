@@ -243,7 +243,7 @@ def oim_node2vec(
 
         all_true_nodes = []
         all_true_edges = []
-        all_true_obs = []
+        # all_true_obs = []
         all_algo_nodes = []
         all_algo_edges = []
         all_algo_obs = []
@@ -256,39 +256,41 @@ def oim_node2vec(
             all_true_edges.append(true_act_edges)
             all_algo_nodes.append(algo_act_nodes)
             all_algo_edges.append(algo_act_edges)
-            all_true_obs.append(true_obs_edges)
+            # all_true_obs.append(true_obs_edges)
             all_algo_obs.append(algo_obs_edges)
 
-        # True seed nodes
-        all_true_nodes = np.unique(np.concatenate(all_true_nodes))
-        all_true_edges = np.unique(np.concatenate(all_true_edges))
-        all_true_obs = np.unique(np.concatenate(all_true_obs))
-        # Algo seed nodes
-        all_algo_nodes = np.unique(np.concatenate(all_algo_nodes))
+        # Mean node counts
+        mean_true_nodes = np.mean([len(i) for i in all_true_nodes])
+        mean_algo_nodes = np.mean([len(i) for i in all_algo_nodes])
+
+        # Mean activated edge counts
+        mean_true_edges = np.mean([len(i) for i in all_true_edges])
+        mean_algo_edges = np.mean([len(i) for i in all_algo_edges])
+
+        # Used for updating M and b later
         all_algo_edges = np.unique(np.concatenate(all_algo_edges))
         all_algo_obs = np.unique(np.concatenate(all_algo_obs))
 
-        regrets.append(len(all_true_nodes) - len(all_algo_nodes))
-        regrets_edges.append(len(all_true_edges) - len(all_algo_edges))
+        regrets.append(mean_true_nodes - mean_algo_nodes)
+        regrets_edges.append(mean_true_edges - mean_algo_edges)
 
         logging.debug(f"True seeds: {s_true}")
         logging.debug(f"Algo   seeds: {s_oracle}")
-        logging.debug(f"True reward: {len(all_true_nodes)}")
-        logging.debug(f"Algo   reward: {len(all_algo_nodes)}")
+        logging.debug(f"True reward: {mean_true_nodes}")
+        logging.debug(f"Algo   reward: {mean_algo_nodes}")
         logging.debug(f"Best algo reward: {reward_best}")
         logging.debug(f"Regrets: {regrets}")
         logging.debug(f"Edge regrets: {regrets_edges}")
-        logging.debug(
-            f"Observed diff: {len(all_true_obs) - len(all_algo_obs)}")
+        # logging.debug(f"Observed diff: {len(all_true_obs) - len(all_algo_obs)}")
         logging.debug(f"Algo weights {u_e[80:90]}".replace("\n", ""))
         logging.debug(f"Real weights {true_weights[80:90]}".replace("\n", ""))
 
-        if len(all_algo_nodes) > reward_best:
-            reward_best = len(all_algo_nodes)
+        if mean_algo_nodes > reward_best:
+            reward_best = mean_algo_nodes
             s_best = s_oracle
             u_e_best = u_e
 
-        if reward_best > len(all_true_nodes):
+        if mean_algo_nodes > mean_true_nodes:
             logging.debug(
                 "The algorithm has achieved better reward than the true seed node set."
             )
@@ -375,9 +377,9 @@ df_friend = df_friend[["source", "target", "day"]]
 nodes = np.sort(
     np.unique(np.hstack((df_friend["source"], df_friend["target"]))))
 # Getting the true weights
-# facebook df_friend['probab'] = np.random.uniform(0, 0.1, size=df_friend.shape[0])
 logging.debug("Generating \"true\" activation probabilities...")
-df_friend['probab'] = np.random.uniform(0, 1, size=df_friend.shape[0])
+df_friend['probab'] = np.random.uniform(0, 0.1, size=df_friend.shape[0])
+# df_friend['probab'] = np.random.uniform(0, 1, size=df_friend.shape[0])
 
 # %% OIM - NODE2VEC - Setup
 NUM_FEATS = 20
