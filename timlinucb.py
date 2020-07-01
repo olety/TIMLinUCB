@@ -179,7 +179,7 @@ def get_features_nodes(df_graph,
                        skiprows=1)
 
 
-def oim_node2vec(
+def oim_node2vec_test(
     df,
     df_feats,
     num_inf=10,
@@ -241,8 +241,8 @@ def oim_node2vec(
         for i in range(num_edges_t):
             x_e = df_feats.loc[i].values
             xMx = (x_e @ m_inv @ x_e.T)  # .clip(min=0)
-            # u_e.append(np.clip(x_e @ theta + c * np.sqrt(xMx), 0, 1))
-            u_e.append(expit(x_e @ theta + c * np.sqrt(xMx)))
+            u_e.append(np.clip(x_e @ theta + c * np.sqrt(xMx), 0, 1))
+            # u_e.append(expit(x_e @ theta + c * np.sqrt(xMx)))
 
         u_e = np.array(u_e)
 
@@ -411,17 +411,17 @@ df_t = df_friend[df_friend["day"] <= t].sort_values("source").reset_index()
 df_feats_t = df_t["index"].apply(lambda x: df_feats.loc[x])
 
 # Running the OIM algorithm
-result_oim = oim_node2vec(df_t,
-                          df_feats_t,
-                          num_repeats_regret_algo=30,
-                          num_repeats_regret_true=30,
-                          num_nodes_tim=nodes[-1])
+result_oim = oim_node2vec_test(df_t,
+                               df_feats_t,
+                               num_repeats_regret_algo=30,
+                               num_repeats_regret_true=30,
+                               num_nodes_tim=nodes[-1])
 logging.debug(
     "The algorithm selected "
     f"{10-len(np.setdiff1d(result_oim['s_true'], result_oim['s_best']))}/10"
     " true seed nodes")
 
-with open('oim.pickle', 'wb') as f:
+with open('oim_clip_save.pickle', 'wb') as f:
     pickle.dump(result_oim, f, protocol=pickle.HIGHEST_PROTOCOL)
 
 # %% ---- OIM - Node2Vec - Plotting regret ----
@@ -442,16 +442,237 @@ results_grid = []
 for epsilon in tqdm([0.1, 0.5, 1]):
     for c in tqdm([0.01, 0.1, 1]):
         for sigma in tqdm([0.1, 1, 5, 10]):
-            results_grid.append(
-                oim_node2vec(df_t,
-                             df_feats_t,
-                             num_repeats_regret_true=50,
-                             num_nodes_tim=nodes[-1],
-                             c=c,
-                             sigma=sigma,
-                             epsilon=epsilon))
+            cur_result = oim_node2vec_test(df_t,
+                                           df_feats_t,
+                                           num_repeats_regret_true=50,
+                                           num_nodes_tim=nodes[-1],
+                                           c=c,
+                                           sigma=sigma,
+                                           epsilon=epsilon)
+            cur_result["sigma"] = sigma
+            cur_result["epsilon"] = epsilon
+            cur_result["c"] = c
+            results_grid.append(cur_result)
 
-with open('grid.pickle', 'wb') as f:
+with open('grid_clip_save.pickle', 'wb') as f:
     pickle.dump(results_grid, f, protocol=pickle.HIGHEST_PROTOCOL)
+#
+# print(results_grid)
+#
+# for i, result_dict in enumerate(results_grid):
+#     pass
+grid_df = pd.DataFrame(results_grid)
+grid_df
+grid_df["learning_steps"] = grid_df.apply(lambda x: len(x["regrets"]), axis=1)
+grid_df[grid_df["learning_steps"] > 1]
+grid_df[grid_df["learning_steps"] > 1]["reward_best"].idxmax()
+pd.Series(grid_df.iloc[20]["regrets"]).plot()
+# %% test
 
-print(results_grid)
+
+def oim_node2vec(
+    df,
+    df_feats,
+    num_inf=10,
+    sigma=4,
+    c=0.1,
+    epsilon=0.4,
+    num_repeats=15,
+    num_nodes_tim=-1,
+    oracle=oracle,
+):
+    logging.debug("Started Online Influence Maximization...")
+    logging.debug("Setting parameters")
+    num_feats = df_feats.shape[1]
+    num_edges_t = df.shape[0]
+
+    # "True" probabilities - effectively our test set
+    true_weights = df["probab"].copy()
+
+    # b, M_inv - used by IMLinUCB
+    b = np.zeros((num_feats, 1))
+    m_inv = np.eye(num_feats, num_feats)
+
+    # Returning these
+    s_best = []
+    reward_best = 0
+    u_e_best = []
+    rewards = []
+    rewards_edges = []
+
+    for iter_oim in tqdm(range(num_repeats),
+                         desc=f"OIM iters {num_edges_t} edges",
+                         leave=False,
+                         file=sys.stderr):
+        # ---- Step 1 - Calculating the u_e ----
+        theta = (m_inv @ b) / (sigma * sigma)
+        # xMx = (df_feats.values @ m_inv @ df_feats.T.values).clip(min=0)
+
+        u_e = []
+        for i in range(num_edges_t):
+            x_e = df_feats.loc[i].values
+            xMx = (x_e @ m_inv @ x_e.T)  # .clip(min=0)
+            u_e.append(np.clip(x_e @ theta + c * np.sqrt(xMx), 0, 1))
+            # u_e.append(expit(x_e @ theta + c * np.sqrt(xMx)))
+
+        u_e = np.array(u_e)
+
+        # ---- Step 2 - Evaluating the performance ----
+        # Loss function
+        df["probab"] = u_e
+        s_oracle = sorted(
+            oracle(df[["source", "target", "probab"]], num_nodes_tim,
+                   num_edges_t, num_inf, epsilon))
+
+        # Observing edge-level feedback
+        df["probab"] = true_weights
+
+        algo_act_nodes, algo_act_edges, algo_obs_edges = run_ic_eff(
+            df, s_oracle)
+
+        algo_num_nodes = len(algo_act_nodes)
+        algo_num_edges = len(algo_act_edges)
+
+        rewards.append(algo_num_nodes)
+        rewards_edges.append(algo_num_edges)
+
+        logging.debug(f"Algo   seeds: {s_oracle}")
+        logging.debug(f"Algo   reward: {algo_num_nodes}")
+        logging.debug(f"Best algo reward: {reward_best}")
+        logging.debug(f"Rewards: {rewards}")
+        logging.debug(f"Edge rewards: {rewards_edges}")
+        logging.debug(f"Algo weights {u_e[80:90]}".replace("\n", ""))
+        logging.debug(f"Real weights {true_weights[80:90]}".replace("\n", ""))
+
+        if algo_num_nodes > reward_best:
+            reward_best = algo_num_nodes
+            s_best = s_oracle
+            u_e_best = u_e
+
+        # ---- Step 3 - Calculating updates ----
+        for i in algo_obs_edges:
+            x_e = np.array([df_feats.loc[i].values])
+            m_inv -= (m_inv @ x_e.T @ x_e @ m_inv) / (x_e @ m_inv @ x_e.T +
+                                                      sigma * sigma)
+            b += x_e.T * int(i in algo_act_edges)
+
+    return_dict = {
+        "rewards": rewards,
+        "rewards_edges": rewards_edges,
+        "s_best": s_best,
+        "u_e_best": u_e_best,
+        "reward_best": reward_best
+    }
+    logging.debug("The algorithm has finished running.")
+    logging.debug(f"Returning: {return_dict}")
+    return return_dict
+
+
+# %% ---- TOIM - Node2Vec - Setup - Style 1: dynamic ----
+# Dynamic style: Only take into account edges at that time step
+# Processing the dataframe
+logging.debug("Splitting the graph into time steps...")
+df_friend["day"] = pd.to_datetime(df_friend["timestamp"],
+                                  unit="s").dt.floor("d")
+df_friend = df_friend.sort_values(by=["timestamp", "source", "target"])
+df_friend = df_friend[["source", "target", "day"]]
+nodes = np.sort(
+    np.unique(np.hstack((df_friend["source"], df_friend["target"]))))
+
+# Getting the true weights
+logging.debug("Generating \"true\" activation probabilities...")
+# df_friend['probab'] = np.random.uniform(0, 0.1, size=df_friend.shape[0])
+df_friend['probab'] = np.random.uniform(0, 1, size=df_friend.shape[0])
+
+NUM_FEATS = 20
+# Getting node embeddings
+logging.debug("Getting node embeddings...")
+df_emb = get_features_nodes(df_friend,
+                            dims=NUM_FEATS,
+                            node2vec_path=os.getcwd(),
+                            dataset_path=DATASET_FACEBOOK)
+df_emb = df_emb.set_index("node").sort_values(by="node")
+# Generating edge features
+logging.debug(f"Generating {NUM_FEATS} edge features...")
+df_feats = []
+for row in tqdm(df_friend.itertuples()):
+    df_feats.append(df_emb.loc[row.source].values *
+                    df_emb.loc[row.target].values)
+df_feats = pd.DataFrame(df_feats)
+
+t = np.sort(np.unique(df_friend["day"]))[55:56][-1]
+df_t = df_friend[df_friend["day"] == t].sort_values("source").reset_index()
+# Getting a graph of one time slice df_t
+logging.debug("Creating df_t and df_feats_t")
+result_toim = []
+for t in tqdm(np.sort(np.unique(df_friend["day"]))[:10]):
+    logging.debug(f"Iterating for TOIM, t={t}")
+    # df_t = df_friend[df_friend["day"] <= t].sort_values("source").reset_index()
+    df_t = df_friend[df_friend["day"] == t].sort_values("source").reset_index()
+    df_feats_t = df_t["index"].apply(lambda x: df_feats.loc[x])
+    # Running the OIM algorithm
+    result_oim = oim_node2vec(df_t, df_feats_t, num_nodes_tim=nodes[-1])
+    result_oim["t"] = t
+    result_toim.append(result_oim)
+
+
+def get_true_stats(df,
+                   num_nodes_tim=-1,
+                   num_inf=10,
+                   num_repeats=20,
+                   oracle=oracle):
+    num_edges = df.shape[0]
+    # Using nodes_t[-1] because TIM wants the max node id
+    s_true = sorted(
+        oracle(df[["source", "target", "probab"]], num_nodes_tim, num_edges,
+               num_inf, epsilon))
+    # Gathering the stats for the "true" seed set
+    all_true_nodes = []
+    all_true_edges = []
+    all_true_obs = []
+    for k in range(num_repeats):
+        true_act_nodes, true_act_edges, true_obs_edges = run_ic_eff(df, s_true)
+        all_true_nodes.append(true_act_nodes)
+        all_true_edges.append(true_act_edges)
+        all_true_obs.append(true_obs_edges)
+
+    # Means for nodes and activated edges
+    mean_true_nodes = np.mean([len(i) for i in all_true_nodes])
+    mean_true_edges = np.mean([len(i) for i in all_true_edges])
+    mean_true_obs = np.mean([len(i) for i in all_true_obs])
+
+    return {
+        "s_true": s_true,
+        "reward": mean_true_nodes,
+        "rewards_edges": mean_true_edges,
+        "num_obs": mean_true_obs
+    }
+
+
+toim_df = pd.DataFrame(toim_results)
+true_sets = toim_df.apply(lambda x: get_true_stats(df_friend[df_friend[
+    "day"] == x["t"]].sort_values("source").reset_index(),
+                                                   num_nodes_tim=nodes[-1]),
+                          axis=1)
+true_sets.to_frame()
+
+df_toim_true = []
+for row in toim_df.itertuples():
+    res_true = get_true_stats(df_friend[df_friend["day"] == row.t].sort_values(
+        "source").reset_index(),
+                              num_nodes_tim=nodes[-1])
+    res_true["t"] = row.t
+    df_toim_true.append(res_true)
+df_toim_true = pd.DataFrame(df_toim_true)
+toim_df["t"]
+df_toim_true["t"]
+toim_df.merge(df_toim_true, on=["t"])
+pd.concat([toim_df, pd.DataFrame(df_toim_true)], axis=1)
+
+toim_df["t"].apply(lambda x: get_true_stats(df_friend[df_friend[
+    "day"] == x].sort_values("source").reset_index(),
+                                            num_nodes_tim=nodes[-1]))
+
+df_t = df_friend[df_friend["day"] == toim_df.loc[0]["t"]].sort_values(
+    "source").reset_index()
+get_true_stats(df_t)
