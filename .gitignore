@@ -283,4 +283,5 @@ algo/*
 plot_dir/*
 temp_dir/*
 tim*dir
+tim_*
 eps*/
