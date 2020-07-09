@@ -117,6 +117,54 @@ def tim(
     return list(map(int, out_pattern.findall(out)[0].split(" ")))
 
 
+def tim_parallel(
+    df,
+    num_nodes,
+    num_edges,
+    num_inf,
+    epsilon,
+    tim_file="./tim",
+    temp_dir="temp_dir",
+    out_pattern=re.compile("Selected k SeedSet: (.+?) \\n"),
+):
+    """ Runs TIM (the oracle function).
+    Input: df -- the graph to process
+    num_inf -- the k the we are looking for
+    epsilon -- hyperparameter
+    Output: T -- The k highest influencers
+    """
+    if not os.path.exists(temp_dir):
+        os.makedirs(temp_dir)
+
+    df.to_csv(
+        os.path.join(temp_dir, "graph_ic.inf"), index=False, sep=" ", header=False
+    )
+    # Preparing to run TIM
+    with open(os.path.join(temp_dir, "attribute.txt"), "w+") as f:
+        f.write(f"n={num_nodes}\nm={num_edges}")
+
+    process = Popen(
+        [
+            tim_file,
+            "-model",
+            "IC",
+            "-dataset",
+            "temp_dir",
+            "-k",
+            f"{num_inf}",
+            "-epsilon",
+            f"{epsilon}",
+        ],
+        stdout=PIPE,
+        stderr=PIPE,
+    )
+    (output, err) = process.communicate()
+    _ = process.wait()  # Returns exit code
+    out = output.decode("utf-8")
+    # logging.debug(f"Running TIM, {out}")
+    return list(map(int, out_pattern.findall(out)[0].split(" ")))
+
+
 def tim_t(df_edges, nodes, times, num_seeds=5, num_repeats_reward=20, epsilon=0.4):
     # TIM wants the max node ID
     num_nodes = nodes[-1]

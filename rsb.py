@@ -6,8 +6,6 @@ import pandas as pd
 import numpy as np
 import logging
 from matplotlib import pyplot as plt
-from functools import partial
-import sys
 from helpers import get_avg_reward
 
 
@@ -21,20 +19,23 @@ plt.style.use("ggplot")
 pd.options.mode.chained_assignment = None  # default='warn'
 
 # Setting up logging
-VERBOSE = True
+VERBOSE = False
 LOGGING_FMT = (
     "%(levelname)s | %(asctime)s | line %(lineno)s | %(funcName)s | %(message)s"
 )
 LOGGING_DATEFMT = "%H:%M:%S"
 
-logging_conf = partial(
-    logging.basicConfig, format=LOGGING_FMT, datefmt=LOGGING_DATEFMT, stream=sys.stdout
-)
+logger_rsb = logging.getLogger("logger_rsb")
+
+syslog = logging.StreamHandler()
+formatter = logging.Formatter(fmt=LOGGING_FMT, datefmt=LOGGING_DATEFMT)
+syslog.setFormatter(formatter)
+logger_rsb.addHandler(syslog)
 
 if VERBOSE:
-    logging_conf(level=logging.DEBUG)
+    logger_rsb.setLevel(logging.DEBUG)
 else:
-    logging_conf(level=logging.INFO)
+    logger_rsb.setLevel(logging.INFO)
 
 
 # --------------------------------------------------------------------------------------
@@ -135,6 +136,7 @@ def rsb2(
     gamma=0.2,
     num_repeats_expect=25,
     persist_params=True,
+    style="additive",
 ):
     num_nodes = nodes.shape[0]
     df_weights = pd.DataFrame(
@@ -146,7 +148,10 @@ def rsb2(
     df_weights["expected_gain"] = 0
     results = []
     for t in tqdm(times):
-        df_t = df_edges[df_edges["day"] <= t]
+        if style == "additive":
+            df_t = df_edges[df_edges["day"] <= t]
+        elif style == "dynamic":
+            df_t = df_edges[df_edges["day"] == t]
         nodes_t = np.sort(np.unique(np.hstack((df_t["source"], df_t["target"]))))
         num_nodes_t = nodes_t.shape[0]
         df_weights["walked"] = False

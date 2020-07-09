@@ -1,6 +1,5 @@
 #! /usr/local/bin/python3
 
-from functools import partial
 import logging
 import pandas as pd
 import numpy as np
@@ -10,7 +9,9 @@ from subprocess import Popen, PIPE
 import os
 import matplotlib.pyplot as plt
 import random
-from helpers import run_ic_eff, tim
+import shutil
+from functools import partial
+from helpers import run_ic_eff, tim, tim_parallel
 
 
 # --------------------------------------------------------------------------------------
@@ -22,20 +23,24 @@ random.seed(42)
 plt.style.use("ggplot")
 
 # Setting up logging
-VERBOSE = True
+VERBOSE = False
 LOGGING_FMT = (
     "%(levelname)s | %(asctime)s | line %(lineno)s | %(funcName)s | %(message)s"
 )
 LOGGING_DATEFMT = "%H:%M:%S"
 
-logging_conf = partial(
-    logging.basicConfig, format=LOGGING_FMT, datefmt=LOGGING_DATEFMT, stream=sys.stdout
-)
+logger_tlu = logging.getLogger("logger_tlu")
+
+syslog = logging.StreamHandler()
+formatter = logging.Formatter(fmt=LOGGING_FMT, datefmt=LOGGING_DATEFMT)
+syslog.setFormatter(formatter)
+logger_tlu.addHandler(syslog)
+
 
 if VERBOSE:
-    logging_conf(level=logging.DEBUG)
+    logger_tlu.setLevel(logging.DEBUG)
 else:
-    logging_conf(level=logging.INFO)
+    logger_tlu.setLevel(logging.INFO)
 
 
 # --------------------------------------------------------------------------------------
@@ -86,7 +91,7 @@ def get_features_nodes(
     (output, err) = process.communicate()
     _ = process.wait()  # Returns exit code
     out = output.decode("utf-8")
-    logging.debug(f"Running node2vec, {out}")
+    logger_tlu.debug(f"Running node2vec, {out}")
 
     return pd.read_csv(
         FNAME_OUT,
@@ -107,10 +112,12 @@ def generate_node2vec_fetures(
     # Checking if we did this before
     FNAME_SAVE = os.path.join(tempdir_name, f"{dataset_name}-d{num_features}-edges.emb")
     if check_existing and os.path.exists(FNAME_SAVE):
-        return pd.read_csv(FNAME_SAVE, index_col=0)
+        df_ret = pd.read_csv(FNAME_SAVE)
+        df_ret[df_ret.columns[0]] = df_ret[df_ret.columns[0]].astype(int)
+        return df_ret.set_index(df_ret.columns[0])
 
     # Getting node embeddings
-    logging.debug("Getting node embeddings...")
+    logger_tlu.debug("Getting node embeddings...")
     df_emb = get_features_nodes(
         df,
         dims=num_features,
@@ -122,14 +129,14 @@ def generate_node2vec_fetures(
     df_emb = df_emb.set_index("node").sort_values(by="node")
 
     # Generating edge features
-    logging.debug(f"Generating {num_features} edge features...")
+    logger_tlu.debug(f"Generating {num_features} edge features...")
     df_feats = []
     for row in tqdm(df.itertuples(), total=df.shape[0]):
         df_feats.append(df_emb.loc[row.source].values * df_emb.loc[row.target].values)
     df_feats = pd.DataFrame(df_feats)
 
     # Saving the results
-    logging.debug(f"Saving the edge features to {FNAME_SAVE}")
+    logger_tlu.debug(f"Saving the edge features to {FNAME_SAVE}")
     df_feats.to_csv(FNAME_SAVE)
 
     return df_feats
@@ -153,8 +160,8 @@ def oim_node2vec_test(
     num_nodes_tim=-1,
     oracle=tim,
 ):
-    logging.debug("Started Online Influence Maximization...")
-    logging.debug("Setting parameters")
+    logger_tlu.debug("Started Online Influence Maximization...")
+    logger_tlu.debug("Setting parameters")
     num_feats = df_feats.shape[1]
     num_edges_t = df.shape[0]
 
@@ -253,20 +260,20 @@ def oim_node2vec_test(
         regrets.append(mean_true_nodes - mean_algo_nodes)
         regrets_edges.append(mean_true_edges - mean_algo_edges)
 
-        logging.debug(f"True seeds: {s_true}")
-        logging.debug(f"Algo   seeds: {s_oracle}")
-        logging.debug(
+        logger_tlu.debug(f"True seeds: {s_true}")
+        logger_tlu.debug(f"Algo   seeds: {s_oracle}")
+        logger_tlu.debug(
             "Diff between true and algo seeds: "
             f"{len(np.setdiff1d(s_true, s_oracle))}"
         )
-        logging.debug(f"True reward: {mean_true_nodes}")
-        logging.debug(f"Algo   reward: {mean_algo_nodes}")
-        logging.debug(f"Best algo reward: {reward_best}")
-        logging.debug(f"Regrets: {regrets}")
-        logging.debug(f"Edge regrets: {regrets_edges}")
-        logging.debug(f"Observed diff: {mean_true_obs - mean_algo_obs}")
-        logging.debug(f"Algo weights {u_e[80:90]}".replace("\n", ""))
-        logging.debug(f"Real weights {true_weights[80:90]}".replace("\n", ""))
+        logger_tlu.debug(f"True reward: {mean_true_nodes}")
+        logger_tlu.debug(f"Algo   reward: {mean_algo_nodes}")
+        logger_tlu.debug(f"Best algo reward: {reward_best}")
+        logger_tlu.debug(f"Regrets: {regrets}")
+        logger_tlu.debug(f"Edge regrets: {regrets_edges}")
+        logger_tlu.debug(f"Observed diff: {mean_true_obs - mean_algo_obs}")
+        logger_tlu.debug(f"Algo weights {u_e[80:90]}".replace("\n", ""))
+        logger_tlu.debug(f"Real weights {true_weights[80:90]}".replace("\n", ""))
 
         if mean_algo_nodes > reward_best:
             reward_best = mean_algo_nodes
@@ -274,11 +281,11 @@ def oim_node2vec_test(
             u_e_best = u_e
 
         if mean_algo_nodes > mean_true_nodes:
-            logging.debug(
+            logger_tlu.debug(
                 "The algorithm has achieved better reward than the true seed node set."
             )
-            logging.debug("Stopping learning.")
-            logging.debug(f"Best algo seed node set: {s_best}")
+            logger_tlu.debug("Stopping learning.")
+            logger_tlu.debug(f"Best algo seed node set: {s_best}")
             return_dict = {
                 "regrets": regrets,
                 "regrets_edges": regrets_edges,
@@ -287,7 +294,7 @@ def oim_node2vec_test(
                 "u_e_best": u_e_best,
                 "reward_best": reward_best,
             }
-            logging.debug(f"Returning {return_dict}")
+            logger_tlu.debug(f"Returning {return_dict}")
             return return_dict
 
         # ---- Step 3 - Calculating updates ----
@@ -306,8 +313,8 @@ def oim_node2vec_test(
         "u_e_best": u_e_best,
         "reward_best": reward_best,
     }
-    logging.debug("The algorithm has finished running.")
-    logging.debug(f"Returning: {return_dict}")
+    logger_tlu.debug("The algorithm has finished running.")
+    logger_tlu.debug(f"Returning: {return_dict}")
     return return_dict
 
 
@@ -322,8 +329,8 @@ def oim_node2vec_simple(
     num_nodes_tim=-1,
     oracle=tim,
 ):
-    logging.debug("Started Online Influence Maximization...")
-    logging.debug("Setting parameters")
+    logger_tlu.debug("Started Online Influence Maximization...")
+    logger_tlu.debug("Setting parameters")
     num_feats = df_feats.shape[1]
     num_edges_t = df.shape[0]
 
@@ -384,13 +391,13 @@ def oim_node2vec_simple(
         rewards.append(algo_num_nodes)
         rewards_edges.append(algo_num_edges)
 
-        logging.debug(f"Algo   seeds: {s_oracle}")
-        logging.debug(f"Algo   reward: {algo_num_nodes}")
-        logging.debug(f"Best algo reward: {reward_best}")
-        logging.debug(f"Rewards: {rewards}")
-        logging.debug(f"Edge rewards: {rewards_edges}")
-        logging.debug(f"Algo weights {u_e[80:90]}".replace("\n", ""))
-        logging.debug(f"Real weights {true_weights[80:90]}".replace("\n", ""))
+        logger_tlu.debug(f"Algo   seeds: {s_oracle}")
+        logger_tlu.debug(f"Algo   reward: {algo_num_nodes}")
+        logger_tlu.debug(f"Best algo reward: {reward_best}")
+        logger_tlu.debug(f"Rewards: {rewards}")
+        logger_tlu.debug(f"Edge rewards: {rewards_edges}")
+        logger_tlu.debug(f"Algo weights {u_e[80:90]}".replace("\n", ""))
+        logger_tlu.debug(f"Real weights {true_weights[80:90]}".replace("\n", ""))
 
         if algo_num_nodes > reward_best:
             reward_best = algo_num_nodes
@@ -412,8 +419,8 @@ def oim_node2vec_simple(
         "u_e_best": u_e_best,
         "reward_best": reward_best,
     }
-    logging.debug("The algorithm has finished running.")
-    logging.debug(f"Returning: {return_dict}")
+    logger_tlu.debug("The algorithm has finished running.")
+    logger_tlu.debug(f"Returning: {return_dict}")
     return return_dict
 
 
@@ -429,8 +436,8 @@ def oim_node2vec(
     num_repeats_reward=20,
     oracle=tim,
 ):
-    logging.debug("Started Online Influence Maximization...")
-    logging.debug("Setting parameters")
+    logger_tlu.debug("Started Online Influence Maximization...")
+    logger_tlu.debug("Setting parameters")
     num_feats = df_feats.shape[1]
     num_edges_t = df.shape[0]
     num_nodes_tim = nodes[-1]
@@ -497,11 +504,11 @@ def oim_node2vec(
         all_algo_edges = np.unique(np.concatenate(all_algo_edges))
         all_algo_obs = np.unique(np.concatenate(all_algo_obs))
 
-        logging.debug(f"Algo   seeds: {s_oracle}")
-        logging.debug(f"Algo   reward: {mean_algo_nodes}")
-        logging.debug(f"Best algo reward: {reward_best}")
-        logging.debug(f"Algo weights {u_e[80:90]}".replace("\n", ""))
-        logging.debug(f"Real weights {true_weights[80:90]}".replace("\n", ""))
+        logger_tlu.debug(f"Algo   seeds: {s_oracle}")
+        logger_tlu.debug(f"Algo   reward: {mean_algo_nodes}")
+        logger_tlu.debug(f"Best algo reward: {reward_best}")
+        logger_tlu.debug(f"Algo weights {u_e[80:90]}".replace("\n", ""))
+        logger_tlu.debug(f"Real weights {true_weights[80:90]}".replace("\n", ""))
 
         if mean_algo_nodes > reward_best:
             reward_best = mean_algo_nodes
@@ -517,14 +524,69 @@ def oim_node2vec(
             b += x_e.T * int(i in all_algo_edges)
 
     return_dict = {"s_best": s_best, "u_e_best": u_e_best, "reward_best": reward_best}
-    logging.debug("The algorithm has finished running.")
-    logging.debug(f"Returning: {return_dict}")
+    logger_tlu.debug("The algorithm has finished running.")
+    logger_tlu.debug(f"Returning: {return_dict}")
     return return_dict
 
 
 # --------------------------------------------------------------------------------------
 # %% ------------------------------ Temporal Online IM ---------------------------------
 # --------------------------------------------------------------------------------------
+
+
+def timlinucb_parallel(
+    df_edges,
+    df_feats,
+    times,
+    nodes,
+    num_seeds=5,
+    sigma=4,
+    c=0.1,
+    epsilon=0.4,
+    num_repeats_oim=10,
+    num_repeats_oim_reward=10,
+    style="additive",
+):
+    if "tim" not in os.listdir():
+        logger_tlu.warning("Couldn't find TIM in the program directory")
+        return False
+
+    name_id = 0
+    tim_name = "tim"
+
+    logger_tlu.debug("Finding the name of the new TIM file")
+    while tim_name in os.listdir():
+        name_id += 1
+        tim_name = "tim" + str(name_id)
+
+    logger_tlu.debug(f"Name of the new TIM file: {tim_name}")
+    shutil.copyfile("tim", tim_name)
+
+    results = []
+    for t in tqdm(times, desc=f"TOIM iters", leave=False, file=sys.stderr,):
+        if style == "additive":
+            df_t = df_edges[df_edges["day"] <= t].sort_values("source").reset_index()
+        elif style == "dynamic":
+            df_t = df_edges[df_edges["day"] == t].sort_values("source").reset_index()
+        df_feats_t = df_t["index"].apply(lambda x: df_feats.loc[x])
+        result_oim = oim_node2vec(
+            df_t,
+            df_feats_t,
+            nodes,
+            num_inf=num_seeds,
+            sigma=sigma,
+            c=c,
+            epsilon=epsilon,
+            num_repeats=num_repeats_oim,
+            num_repeats_reward=num_repeats_oim_reward,
+            oracle=partial(tim_parallel, tim_file=tim_name),
+        )
+        result_oim["time"] = t
+        results.append(result_oim)
+
+    logger_tlu.debug(f"Removing the new TIM file: {tim_name}")
+    os.remove(tim_name)
+    return pd.DataFrame(results)
 
 
 def timlinucb(
@@ -538,10 +600,14 @@ def timlinucb(
     epsilon=0.4,
     num_repeats_oim=10,
     num_repeats_oim_reward=10,
+    style="additive",
 ):
     results = []
-    for t in tqdm(times):
-        df_t = df_edges[df_edges["day"] <= t].sort_values("source").reset_index()
+    for t in tqdm(times, desc=f"TOIM iters", leave=False, file=sys.stderr,):
+        if style == "additive":
+            df_t = df_edges[df_edges["day"] <= t].sort_values("source").reset_index()
+        elif style == "dynamic":
+            df_t = df_edges[df_edges["day"] == t].sort_values("source").reset_index()
         df_feats_t = df_t["index"].apply(lambda x: df_feats.loc[x])
         result_oim = oim_node2vec(
             df_t,
