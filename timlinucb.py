@@ -10,6 +10,7 @@ import os
 import matplotlib.pyplot as plt
 import random
 import shutil
+import stat
 from functools import partial
 from helpers import run_ic_eff, tim, tim_parallel
 
@@ -40,7 +41,7 @@ logger_tlu.addHandler(syslog)
 if VERBOSE:
     logger_tlu.setLevel(logging.DEBUG)
 else:
-    logger_tlu.setLevel(logging.INFO)
+    logger_tlu.setLevel(logging.WARNING)
 
 
 # --------------------------------------------------------------------------------------
@@ -529,6 +530,106 @@ def oim_node2vec(
     return return_dict
 
 
+def oim_node2vec_parallel(
+    df,
+    df_feats,
+    nodes,
+    num_inf=10,
+    sigma=4,
+    c=0.1,
+    epsilon=0.4,
+    num_repeats=30,
+    num_repeats_reward=20,
+    oracle=tim,
+):
+    logger_tlu.debug("Started Online Influence Maximization...")
+    logger_tlu.debug("Setting parameters")
+    num_feats = df_feats.shape[1]
+    num_edges_t = df.shape[0]
+    num_nodes_tim = nodes[-1]
+    # "True" probabilities - effectively our test set
+    true_weights = df["probab"].copy()
+
+    # b, M_inv - used by IMLinUCB
+    b = np.zeros((num_feats, 1))
+    m_inv = np.eye(num_feats, num_feats)
+
+    # Returning these
+    s_best = []
+    reward_best = 0
+    u_e_best = []
+
+    for iter_oim in range(num_repeats):
+        # ---- Step 1 - Calculating the u_e ----
+        theta = (m_inv @ b) / (sigma * sigma)
+        # xMx = (df_feats.values @ m_inv @ df_feats.T.values).clip(min=0)
+
+        u_e = []
+        for i in range(num_edges_t):
+            x_e = df_feats.loc[i].values
+            xMx = x_e @ m_inv @ x_e.T  # .clip(min=0)
+            u_e.append(np.clip(x_e @ theta + c * np.sqrt(xMx), 0, 1))
+            # u_e.append(expit(x_e @ theta + c * np.sqrt(xMx)))
+
+        u_e = np.array(u_e)
+
+        # ---- Step 2 - Evaluating the performance ----
+        # Loss function
+        df["probab"] = u_e
+        s_oracle = sorted(
+            oracle(
+                df[["source", "target", "probab"]],
+                num_nodes_tim,
+                num_edges_t,
+                num_inf,
+                epsilon,
+            )
+        )
+
+        # Observing edge-level feedback
+        df["probab"] = true_weights
+
+        all_algo_nodes = []
+        all_algo_edges = []
+        all_algo_obs = []
+        for k in range(num_repeats_reward):
+            algo_act_nodes, algo_act_edges, algo_obs_edges = run_ic_eff(df, s_oracle)
+            all_algo_nodes.append(algo_act_nodes)
+            all_algo_edges.append(algo_act_edges)
+            all_algo_obs.append(algo_obs_edges)
+
+        # Mean node counts
+        mean_algo_nodes = np.mean([len(i) for i in all_algo_nodes])
+
+        # Used for updating M and b later
+        all_algo_edges = np.unique(np.concatenate(all_algo_edges))
+        all_algo_obs = np.unique(np.concatenate(all_algo_obs))
+
+        logger_tlu.debug(f"Algo   seeds: {s_oracle}")
+        logger_tlu.debug(f"Algo   reward: {mean_algo_nodes}")
+        logger_tlu.debug(f"Best algo reward: {reward_best}")
+        logger_tlu.debug(f"Algo weights {u_e[80:90]}".replace("\n", ""))
+        logger_tlu.debug(f"Real weights {true_weights[80:90]}".replace("\n", ""))
+
+        if mean_algo_nodes > reward_best:
+            reward_best = mean_algo_nodes
+            s_best = s_oracle
+            u_e_best = u_e
+
+        # ---- Step 3 - Calculating updates ----
+        for i in all_algo_obs:
+            x_e = np.array([df_feats.loc[i].values])
+            m_inv -= (m_inv @ x_e.T @ x_e @ m_inv) / (
+                x_e @ m_inv @ x_e.T + sigma * sigma
+            )
+            b += x_e.T * int(i in all_algo_edges)
+
+    return_dict = {"s_best": s_best, "u_e_best": u_e_best, "reward_best": reward_best}
+    logger_tlu.debug("The algorithm has finished running.")
+    logger_tlu.debug(f"Returning: {return_dict}")
+    return return_dict
+
+
 # --------------------------------------------------------------------------------------
 # %% ------------------------------ Temporal Online IM ---------------------------------
 # --------------------------------------------------------------------------------------
@@ -546,30 +647,29 @@ def timlinucb_parallel(
     num_repeats_oim=10,
     num_repeats_oim_reward=10,
     style="additive",
+    process_id=1,
 ):
     if "tim" not in os.listdir():
         logger_tlu.warning("Couldn't find TIM in the program directory")
         return False
 
-    name_id = 0
-    tim_name = "tim"
-
-    logger_tlu.debug("Finding the name of the new TIM file")
-    while tim_name in os.listdir():
-        name_id += 1
-        tim_name = "tim" + str(name_id)
-
+    tim_name = "tim_" + str(process_id)
+    temp_dir_name = tim_name + "_dir"
     logger_tlu.debug(f"Name of the new TIM file: {tim_name}")
     shutil.copyfile("tim", tim_name)
+    # Making the new tim file executable
+    st = os.stat(tim_name)
+    os.chmod(tim_name, st.st_mode | stat.S_IEXEC)
+    oracle = partial(tim_parallel, tim_file=tim_name, temp_dir=temp_dir_name)
 
     results = []
-    for t in tqdm(times, desc=f"TOIM iters", leave=False, file=sys.stderr,):
+    for t in times:
         if style == "additive":
             df_t = df_edges[df_edges["day"] <= t].sort_values("source").reset_index()
         elif style == "dynamic":
             df_t = df_edges[df_edges["day"] == t].sort_values("source").reset_index()
         df_feats_t = df_t["index"].apply(lambda x: df_feats.loc[x])
-        result_oim = oim_node2vec(
+        result_oim = oim_node2vec_parallel(
             df_t,
             df_feats_t,
             nodes,
@@ -579,13 +679,17 @@ def timlinucb_parallel(
             epsilon=epsilon,
             num_repeats=num_repeats_oim,
             num_repeats_reward=num_repeats_oim_reward,
-            oracle=partial(tim_parallel, tim_file=tim_name),
+            oracle=oracle,
         )
         result_oim["time"] = t
         results.append(result_oim)
 
-    logger_tlu.debug(f"Removing the new TIM file: {tim_name}")
+    logger_tlu.debug(
+        f"Removing the new TIM file {tim_name} and the temp directory {temp_dir_name}"
+    )
     os.remove(tim_name)
+    shutil.rmtree(temp_dir_name)
+
     return pd.DataFrame(results)
 
 

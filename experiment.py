@@ -10,8 +10,10 @@ import pickle
 from tqdm import tqdm
 from functools import partial
 from matplotlib import pyplot as plt
+import multiprocessing
+import joblib
 from timlinucb import generate_node2vec_fetures, timlinucb, timlinucb_parallel
-from helpers import tim_t
+from helpers import tim_t, tqdm_joblib
 from rsb import rsb2
 
 # --------------------------------------------------------------------------------------
@@ -258,12 +260,11 @@ DATASET_NODES = df_facebook_nodes
 # with open("num_reps_reward_facebook.pickle", "wb") as f:
 #     pickle.dump(results_array, f)
 
+# --------------------------------------------------------------------------------------
+# %% -------------------- [Sequential] Grid search for best params ---------------------
+# --------------------------------------------------------------------------------------
 
-# --------------------------------------------------------------------------------------
-# %% --------------------------- Grid search for best params ---------------------------
-# --------------------------------------------------------------------------------------
-#
-logging.debug("Starting grid search for best params - TIMLinUCB/Facebook")
+logging.debug("Starting sequential grid search for best params - TIMLinUCB/Facebook")
 sigma_array = [0.01, 0.1, 0.5, 1, 5, 10]  # was 4
 c_array = [0.01, 0.1, 0.5, 1, 5, 10]  # was 0.1
 epsilon_array = [1, 5, 10, 50]  # was 0.4 [0.1, 0.5]
@@ -296,7 +297,60 @@ for sigma in tqdm(sigma_array, desc="Sigma search", leave=True, file=sys.stderr)
             )
 
 
-with open("grid_facebook.pickle", "wb") as f:
+with open("grid_facebook_seq.pickle", "wb") as f:
+    pickle.dump(results_array, f)
+
+# --------------------------------------------------------------------------------------
+# %% --------------------- [Parallel] Grid search for best params ----------------------
+# --------------------------------------------------------------------------------------
+
+logging.debug("Starting parallel grid search for best params - TIMLinUCB/Facebook")
+sigma_array = [0.01, 0.1, 0.5, 1, 5, 10]  # was 4
+c_array = [0.01, 0.1, 0.5, 1, 5, 10]  # was 0.1
+epsilon_array = [1, 5, 10, 50]  # was 0.4 [0.1, 0.5]
+params_array = []
+results_array = []
+
+
+OPTIMAL_NUM_REPEATS_REWARD = 20
+OPTIMAL_NUM_REPEATS_OIM = 5
+
+
+for sigma in sigma_array:
+    for c in c_array:
+        for epsilon in epsilon_array:
+            params_array.append({"c": c, "sigma": sigma, "epsilon": epsilon})
+
+
+def parallel_grid(i, sigma, epsilon, c):
+    return {
+        "sigma": sigma,
+        "c": c,
+        "epsilon": epsilon,
+        "df": timlinucb_parallel(
+            DATASET,
+            DATASET_FEATS,
+            DATASET_TIMES,
+            DATASET_NODES,
+            num_seeds=NUM_SEEDS_TO_FIND,
+            num_repeats_oim=OPTIMAL_NUM_REPEATS_OIM,
+            num_repeats_oim_reward=OPTIMAL_NUM_REPEATS_REWARD,
+            sigma=sigma,
+            c=c,
+            epsilon=epsilon,
+            process_id=i,
+        ),
+    }
+
+
+with tqdm_joblib(tqdm(desc="Grid search", total=len(params_array))):
+    results_array = joblib.Parallel(n_jobs=-2)(
+        joblib.delayed(parallel_grid)(i, sigma, epsilon, c)
+        for i in range(len(params_array))
+    )
+
+
+with open("grid_facebook_par.pickle", "wb") as f:
     pickle.dump(results_array, f)
 
 

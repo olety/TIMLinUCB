@@ -7,6 +7,8 @@ import numpy as np
 import re
 import os
 from copy import deepcopy
+import joblib
+import contextlib
 from subprocess import Popen, PIPE
 
 
@@ -101,7 +103,7 @@ def tim(
             "-model",
             "IC",
             "-dataset",
-            "temp_dir",
+            temp_dir,
             "-k",
             f"{num_inf}",
             "-epsilon",
@@ -145,11 +147,11 @@ def tim_parallel(
 
     process = Popen(
         [
-            tim_file,
+            f"./{tim_file}",
             "-model",
             "IC",
             "-dataset",
-            "temp_dir",
+            f"{temp_dir}",
             "-k",
             f"{num_inf}",
             "-epsilon",
@@ -187,3 +189,23 @@ def tim_t(df_edges, nodes, times, num_seeds=5, num_repeats_reward=20, epsilon=0.
             }
         )
     return pd.DataFrame(results)
+
+
+@contextlib.contextmanager
+def tqdm_joblib(tqdm_object):
+    # Taken from https://stackoverflow.com/questions/24983493/tracking-progress-of-joblib-parallel-execution/41815007
+    """Context manager to patch joblib to report into tqdm progress bar given as argument"""
+
+    def tqdm_print_progress(self):
+        if self.n_completed_tasks > tqdm_object.n:
+            n_completed = self.n_completed_tasks - tqdm_object.n
+            tqdm_object.update(n=n_completed)
+
+    original_print_progress = joblib.parallel.Parallel.print_progress
+    joblib.parallel.Parallel.print_progress = tqdm_print_progress
+
+    try:
+        yield tqdm_object
+    finally:
+        joblib.parallel.Parallel.print_progress = original_print_progress
+        tqdm_object.close()
