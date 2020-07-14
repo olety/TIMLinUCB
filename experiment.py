@@ -19,7 +19,7 @@ from timlinucb import (
     timlinucb_parallel_t,
 )
 from helpers import tim_t, tqdm_joblib, tim_t_parallel, run_algorithm
-from rsb import rsb2
+from rsb import rsb
 
 # --------------------------------------------------------------------------------------
 # %% ------------------------------ Initial setup --------------------------------------
@@ -141,7 +141,7 @@ logging.debug("Generating node2vec features...")
 df_digg_feats = generate_node2vec_fetures(
     df_digg, dataset_name="digg", num_features=NUM_FEATURES_NODE2VEC
 )
-
+df_digg_feats
 # --------------------------------------------------------------------------------------
 # %% --------------------------- Preparing the School dataset --------------------------
 # --------------------------------------------------------------------------------------
@@ -382,7 +382,7 @@ df_digg_feats = generate_node2vec_fetures(
 #             {
 #                 "gamma": gamma,
 #                 "c": c,
-#                 "df": rsb2(
+#                 "df": rsb(
 #                     DATASET,
 #                     DATASET_NODES,
 #                     DATASET_TIMES,
@@ -416,7 +416,7 @@ df_digg_feats = generate_node2vec_fetures(
 #             "gamma": OPTIMAL_GAMMA_RSB,
 #             "c": OPTIMAL_C_RSB,
 #             "num_repeats_expect": num_repeats_expect,
-#             "df": rsb2(
+#             "df": rsb(
 #                 DATASET,
 #                 DATASET_NODES,
 #                 DATASET_TIMES,
@@ -558,7 +558,7 @@ df_digg_feats = generate_node2vec_fetures(
 # )
 #
 # # Setting up RSB with persistent features
-# results["rsb_persist"] = rsb2(
+# results["rsb_persist"] = rsb(
 #     DATASET,
 #     DATASET_NODES,
 #     DATASET_TIMES,
@@ -570,7 +570,7 @@ df_digg_feats = generate_node2vec_fetures(
 # )
 #
 # # Setting up RSB without persistent features
-# results["rsb_nopersist"] = rsb2(
+# results["rsb_nopersist"] = rsb(
 #     DATASET,
 #     DATASET_NODES,
 #     DATASET_TIMES,
@@ -1080,7 +1080,7 @@ DATASET_NODES = df_digg_nodes
 #             {
 #                 "gamma": gamma,
 #                 "c": c,
-#                 "df": rsb2(
+#                 "df": rsb(
 #                     DATASET,
 #                     DATASET_NODES,
 #                     DATASET_TIMES,
@@ -1150,7 +1150,7 @@ DATASET_NODES = df_digg_nodes
 # setup_array.append(
 #     {
 #         "algo_name": "rsb_persist",
-#         "function": rsb2,
+#         "function": rsb,
 #         "args": [DATASET, DATASET_NODES, DATASET_TIMES],
 #         "kwargs": {
 #             "num_seeds": NUM_SEEDS_TO_FIND,
@@ -1167,7 +1167,7 @@ DATASET_NODES = df_digg_nodes
 # setup_array.append(
 #     {
 #         "algo_name": "rsb_nopersist",
-#         "function": rsb2,
+#         "function": rsb,
 #         "args": [DATASET, DATASET_NODES, DATASET_TIMES],
 #         "kwargs": {
 #             "num_seeds": NUM_SEEDS_TO_FIND,
@@ -1285,7 +1285,7 @@ results["tim_t"] = tim_t(
 )
 
 # Setting up RSB with persistent features
-results["rsb_persist"] = rsb2(
+results["rsb_persist"] = rsb(
     DATASET,
     DATASET_NODES,
     DATASET_TIMES,
@@ -1297,7 +1297,7 @@ results["rsb_persist"] = rsb2(
 )
 
 # Setting up RSB without persistent features
-results["rsb_nopersist"] = rsb2(
+results["rsb_nopersist"] = rsb(
     DATASET,
     DATASET_NODES,
     DATASET_TIMES,
