@@ -44,11 +44,24 @@ else:
 
 
 def get_reward_arm(df_graph, df_weights, new_seed):
-    """ Runs independent cascade model.
-    Input: df_g -- a dataframe representing the graph (with the probabilities)
-    S -- initial set of vertices
-    tracking -- whether we want to check for active/observed nodes
-    Output: T -- resulted influenced set of vertices (including S)
+    """ Run the IC model and get the reward of adding a seed node
+
+    Parameters
+    ----------
+    df_graph : pandas.DataFrame
+        The graph we run the RSB on, in the form of a DataFrame. A row represents one
+        edge in the graph, with columns being named "source", "target", "probab".
+        "probab" column is the "true" activation probability used for the simulation.
+    df_weights : pandas.DataFrame
+        A dataframe of the node weights used by RSB.
+    new_seed : int
+        An id of the new seed node that we are going to test.
+
+    Returns
+    -------
+    results : numpy.Array
+        An array for nodes affected by adding the new_seed to the seed nodes
+
     """
     prev_affected = df_weights[df_weights["walked"] == 1].index.tolist()
     new_affected = [new_seed]
@@ -69,76 +82,70 @@ def get_reward_arm(df_graph, df_weights, new_seed):
     return np.array(new_affected)
 
 
-def rsb(df_edges, nodes, times, num_seeds=10, C=1, gamma=0.2, num_repeats_expect=25):
-    num_nodes = nodes.shape[0]
-    df_weights = pd.DataFrame(
-        data=1, index=nodes, columns=[f"weight_{k}" for k in range(num_seeds)]
-    )
-    df_weights["walked"] = False
-    results = []
-    for t in tqdm(times):
-        # print(t)
-        df_t = df_edges[df_edges["day"] <= t]
-        df_weights["walked"] = False
-        selected = []
-        for cur_seed in range(num_seeds):
-            df_weights["temp_weight"] = (
-                gamma / num_nodes
-                + (1 - gamma)
-                * df_weights[f"weight_{cur_seed}"]
-                / df_weights[f"weight_{cur_seed}"].sum()
-            )
-
-            selection_probab = (
-                df_weights[~df_weights.index.isin(selected)]["temp_weight"]
-                / df_weights[~df_weights.index.isin(selected)]["temp_weight"].sum()
-            )
-            # Draw an arm
-            random_pt = random.uniform(0, df_weights[f"weight_{cur_seed}"].sum())
-            selected_node = (
-                df_weights[f"weight_{cur_seed}"].cumsum() >= random_pt
-            ).idxmax()
-            # Receiving the reward
-            affected_arm = get_reward_arm(df_t, df_weights, selected_node)
-            df_weights.loc[affected_arm, "walked"] = True
-            marginal_gain = len(affected_arm)
-            df_weights["expected_gain"] = 0
-            df_weights.loc[selected_node, "expected_gain"] = (
-                marginal_gain / selection_probab[selected_node]
-            )
-
-            selected.append(selected_node)
-            df_weights[f"weight_{cur_seed}"] = df_weights[
-                f"weight_{cur_seed}"
-            ] * np.exp((gamma * df_weights["expected_gain"]) / (num_nodes * C))
-
-        results.append(
-            {
-                "time": t,
-                "reward": get_avg_reward(df_t, selected, num_repeats_expect),
-                "selected": selected,
-            }
-        )
-    return pd.DataFrame(results)
-
-
 # --------------------------------------------------------------------------------------
-# %% ------------------------------------- RSB 2 ---------------------------------------
+# %% -------------------------------------- RSB ----------------------------------------
 # --------------------------------------------------------------------------------------
 
 
-def rsb2(
+def rsb(
     df_edges,
     nodes,
     times,
     num_seeds=10,
-    C=1,
+    C=1.0,
     gamma=0.2,
     num_repeats_expect=25,
     persist_params=True,
     style="additive",
     hide_tqdm=False,
 ):
+    """ Run the RSB algorithm on a graph
+
+    Parameters
+    ----------
+    df_edges : pandas.DataFrame
+        The graph we run the TOIM on, in the form of a DataFrame. A row represents one
+        edge in the graph, with columns being named "source", "target", "probab",
+        and "day". "probab" column is the "true" activation probability and "day" should
+        correspond to the days specified in times.
+    nodes : pandas.Series
+        A series containing all unique nodes in df.
+    times : pandas.Series, list
+        A series or a list of the times that we are going to iterate through. Useful
+        if you don't want to iterate through every day in the network.
+    num_seeds : int, optional
+        Number of seed nodes to find. Default: 10
+    C: float, optional
+        A hyperparameter used by the RSB algorithm. Refer to the RSB paper for
+        more details. [1] Default: 1.0
+    gamma : float, optional
+        A hyperparameter used by the RSB algorithm. Refer to the RSB paper for
+        more details. [1] Default: 0.2
+    num_repeats_expect : int, optional
+        Default: 25
+    persist_params : boolean, optional
+        Determines if we want to persist the OIM parameters. Default: False
+    style : str, optional
+        Determines whether we take into account all edges up to t ("additive") or just
+        the ones that were formed at t ("dynamic"). Default: "additive"
+    hide_tqdm : boolean, optional
+        A paremeters used if you want to hide all tqdm progress bars. It's useful if
+        you want to paralellize the algorithm. Default: False
+
+    Returns
+    -------
+    results : DataFrame
+        A dataframe with the following columns
+        - time_t, the time step at which everything else was obtained
+        - reward, the average reward obtained by running IC with s_best
+        - selected, the list of the selected seed nodes
+
+
+    .. [1] Bao, Yixin, et al.
+    "Online influence maximization in non-stationary social networks."
+    2016 IEEE/ACM 24th International Symposium on Quality of Service (IWQoS). IEEE, 2016
+
+    """
     num_nodes = nodes.shape[0]
     df_weights = pd.DataFrame(
         data=1,
