@@ -6,7 +6,7 @@ import pandas as pd
 import numpy as np
 import logging
 from matplotlib import pyplot as plt
-from helpers import get_avg_reward
+from helpers import get_stats_reward
 
 
 # --------------------------------------------------------------------------------------
@@ -101,6 +101,8 @@ def rsb(
 ):
     """ Run the RSB algorithm on a graph
 
+    Runs the RSB algorithm [1].
+
     Parameters
     ----------
     df_edges : pandas.DataFrame
@@ -140,10 +142,11 @@ def rsb(
         - reward, the average reward obtained by running IC with s_best
         - selected, the list of the selected seed nodes
 
-
+    References
+    ----------
     .. [1] Bao, Yixin, et al.
-    "Online influence maximization in non-stationary social networks."
-    2016 IEEE/ACM 24th International Symposium on Quality of Service (IWQoS). IEEE, 2016
+        "Online influence maximization in non-stationary social networks."
+        2016 IEEE/ACM 24th International Symposium on Quality of Service (IWQoS). IEEE, 2016
 
     """
     num_nodes = nodes.shape[0]
@@ -216,12 +219,8 @@ def rsb(
         if persist_params:
             df_weights.loc[df_weights_t.index] = np.nan
             df_weights = df_weights.combine_first(df_weights_t)
-
+        reward, std = get_stats_reward(df_t, selected, num_repeats_expect)
         results.append(
-            {
-                "time": t,
-                "reward": get_avg_reward(df_t, selected, num_repeats_expect),
-                "selected": selected,
-            }
+            {"time": t, "reward": reward, "std": std, "selected": selected,}
         )
     return pd.DataFrame(results)

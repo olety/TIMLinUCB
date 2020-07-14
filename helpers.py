@@ -306,9 +306,11 @@ def tim(
     seeds : list
         A set of seed nodes that maximizes influence found by TIM
 
+    References
+    ----------
     .. [1] Tang, Youze, Xiaokui Xiao, and Yanchen Shi.
-    "Influence maximization: Near-optimal time complexity meets practical efficiency."
-    Proceedings of the 2014 ACM SIGMOD international conference on Management of data. 2014.
+        "Influence maximization: Near-optimal time complexity meets practical efficiency."
+        Proceedings of the 2014 ACM SIGMOD international conference on Management of data. 2014.
     """
     if not os.path.exists(temp_dir):
         os.makedirs(temp_dir)
@@ -383,9 +385,11 @@ def tim_parallel(
     seeds : list
         A set of seed nodes that maximizes influence found by TIM
 
+    References
+    ----------
     .. [1] Tang, Youze, Xiaokui Xiao, and Yanchen Shi.
-    "Influence maximization: Near-optimal time complexity meets practical efficiency."
-    Proceedings of the 2014 ACM SIGMOD international conference on Management of data. 2014.
+        "Influence maximization: Near-optimal time complexity meets practical efficiency."
+        Proceedings of the 2014 ACM SIGMOD international conference on Management of data. 2014.
     """
     if not os.path.exists(temp_dir):
         os.makedirs(temp_dir)
@@ -450,9 +454,11 @@ def tim_t(df_edges, nodes, times, num_seeds=5, num_repeats_reward=20, epsilon=0.
         * reward, an average reward obtained over num_repeats_reward runs
         * selected, a list of selected seed nodes
 
+    References
+    ----------
     .. [1] Tang, Youze, Xiaokui Xiao, and Yanchen Shi.
-    "Influence maximization: Near-optimal time complexity meets practical efficiency."
-    Proceedings of the 2014 ACM SIGMOD international conference on Management of data. 2014.
+        "Influence maximization: Near-optimal time complexity meets practical efficiency."
+        Proceedings of the 2014 ACM SIGMOD international conference on Management of data. 2014.
     """
     # TIM wants the max node ID ()
     num_nodes = nodes[-1] + 1
@@ -467,12 +473,9 @@ def tim_t(df_edges, nodes, times, num_seeds=5, num_repeats_reward=20, epsilon=0.
             num_seeds,
             epsilon,
         )
+        reward, std = get_stats_reward(df_t, selected_seeds, num_repeats_reward)
         results.append(
-            {
-                "time": t,
-                "reward": get_avg_reward(df_t, selected_seeds, num_repeats_reward),
-                "selected": selected_seeds,
-            }
+            {"time": t, "reward": reward, "std": std, "selected": selected_seeds}
         )
     return pd.DataFrame(results)
 
@@ -519,9 +522,11 @@ def tim_t_parallel(
         * reward, an average reward obtained over num_repeats_reward runs
         * selected, a list of selected seed nodes
 
+    References
+    ----------
     .. [1] Tang, Youze, Xiaokui Xiao, and Yanchen Shi.
-    "Influence maximization: Near-optimal time complexity meets practical efficiency."
-    Proceedings of the 2014 ACM SIGMOD international conference on Management of data. 2014.
+        "Influence maximization: Near-optimal time complexity meets practical efficiency."
+        Proceedings of the 2014 ACM SIGMOD international conference on Management of data. 2014.
     """
     tim_name = "tim_t_" + str(process_id)
     temp_dir_name = tim_name + "_dir"
@@ -545,11 +550,8 @@ def tim_t_parallel(
             tim_name,
             temp_dir_name,
         )
+        reward, std = get_stats_reward(df_t, selected_seeds, num_repeats_reward)
         results.append(
-            {
-                "time": t,
-                "reward": get_avg_reward(df_t, selected_seeds, num_repeats_reward),
-                "selected": selected_seeds,
-            }
+            {"time": t, "reward": reward, "std": std, "selected": selected_seeds}
         )
     return pd.DataFrame(results)
