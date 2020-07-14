@@ -137,6 +137,7 @@ def rsb2(
     num_repeats_expect=25,
     persist_params=True,
     style="additive",
+    hide_tqdm=False,
 ):
     num_nodes = nodes.shape[0]
     df_weights = pd.DataFrame(
@@ -147,11 +148,20 @@ def rsb2(
     df_weights["walked"] = False
     df_weights["expected_gain"] = 0
     results = []
-    for t in tqdm(times):
+
+    # We want to hide TQDM if processing RSB in parallel
+    if hide_tqdm:
+        times_iter = times
+    else:
+        times_iter = tqdm(times, desc=f"RSB iters", leave=True)
+
+    for t in times_iter:
+
         if style == "additive":
             df_t = df_edges[df_edges["day"] <= t]
         elif style == "dynamic":
             df_t = df_edges[df_edges["day"] == t]
+
         nodes_t = np.sort(np.unique(np.hstack((df_t["source"], df_t["target"]))))
         num_nodes_t = nodes_t.shape[0]
         df_weights["walked"] = False
@@ -170,6 +180,7 @@ def rsb2(
                 df_weights_t[~df_weights_t.index.isin(selected)]["temp_weight"]
                 / df_weights_t[~df_weights_t.index.isin(selected)]["temp_weight"].sum()
             )
+
             # Draw an arm
             random_pt = random.uniform(0, df_weights_t[f"weight_{cur_seed}"].sum())
 
@@ -179,6 +190,7 @@ def rsb2(
                 ].cumsum()
                 >= random_pt
             ).idxmax()
+
             # Receiving the reward
             affected_arm = get_reward_arm(df_t, df_weights_t, selected_node)
             df_weights_t.loc[affected_arm, "walked"] = True

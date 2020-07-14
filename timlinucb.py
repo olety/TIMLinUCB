@@ -12,8 +12,8 @@ import random
 import shutil
 import stat
 from functools import partial
-from helpers import run_ic_eff, tim, tim_parallel
-
+from helpers import run_ic_eff, tim, tim_parallel, tqdm_joblib, _run_timlinucb_parallel
+import joblib
 
 # --------------------------------------------------------------------------------------
 # %% ------------------------------ Initial setup --------------------------------------
@@ -148,7 +148,7 @@ def generate_node2vec_fetures(
 # --------------------------------------------------------------------------------------
 
 
-def oim_node2vec_test(
+def _oim_node2vec_test(
     df,
     df_feats,
     num_inf=10,
@@ -436,30 +436,40 @@ def oim_node2vec(
     num_repeats=30,
     num_repeats_reward=20,
     oracle=tim,
+    persist=False,
+    b=None,
+    m_inv=None,
+    hide_tqdm=False,
 ):
     logger_tlu.debug("Started Online Influence Maximization...")
     logger_tlu.debug("Setting parameters")
     num_feats = df_feats.shape[1]
     num_edges_t = df.shape[0]
-    num_nodes_tim = nodes[-1]
+    num_nodes_tim = nodes[-1] + 1  # TIM counts from 0
     # "True" probabilities - effectively our test set
     true_weights = df["probab"].copy()
 
     # b, M_inv - used by IMLinUCB
-    b = np.zeros((num_feats, 1))
-    m_inv = np.eye(num_feats, num_feats)
+    if not persist:
+        b = np.zeros((num_feats, 1))
+        m_inv = np.eye(num_feats, num_feats)
 
     # Returning these
     s_best = []
     reward_best = 0
     u_e_best = []
 
-    for iter_oim in tqdm(
-        range(num_repeats),
-        desc=f"OIM iters {num_edges_t} edges",
-        leave=False,
-        file=sys.stderr,
-    ):
+    if hide_tqdm:
+        oim_iterator = range(num_repeats)
+    else:
+        oim_iterator = tqdm(
+            range(num_repeats),
+            desc=f"OIM iters {num_edges_t} edges",
+            leave=False,
+            file=sys.stderr,
+        )
+
+    for iter_oim in oim_iterator:
         # ---- Step 1 - Calculating the u_e ----
         theta = (m_inv @ b) / (sigma * sigma)
         # xMx = (df_feats.values @ m_inv @ df_feats.T.values).clip(min=0)
@@ -524,107 +534,21 @@ def oim_node2vec(
             )
             b += x_e.T * int(i in all_algo_edges)
 
-    return_dict = {"s_best": s_best, "u_e_best": u_e_best, "reward_best": reward_best}
-    logger_tlu.debug("The algorithm has finished running.")
-    logger_tlu.debug(f"Returning: {return_dict}")
-    return return_dict
+    if persist:
+        return_dict = {
+            "s_best": s_best,
+            "u_e_best": u_e_best,
+            "reward_best": reward_best,
+            "m_inv": m_inv,
+            "b": b,
+        }
+    else:
+        return_dict = {
+            "s_best": s_best,
+            "u_e_best": u_e_best,
+            "reward_best": reward_best,
+        }
 
-
-def oim_node2vec_parallel(
-    df,
-    df_feats,
-    nodes,
-    num_inf=10,
-    sigma=4,
-    c=0.1,
-    epsilon=0.4,
-    num_repeats=30,
-    num_repeats_reward=20,
-    oracle=tim,
-):
-    logger_tlu.debug("Started Online Influence Maximization...")
-    logger_tlu.debug("Setting parameters")
-    num_feats = df_feats.shape[1]
-    num_edges_t = df.shape[0]
-    num_nodes_tim = nodes[-1]
-    # "True" probabilities - effectively our test set
-    true_weights = df["probab"].copy()
-
-    # b, M_inv - used by IMLinUCB
-    b = np.zeros((num_feats, 1))
-    m_inv = np.eye(num_feats, num_feats)
-
-    # Returning these
-    s_best = []
-    reward_best = 0
-    u_e_best = []
-
-    for iter_oim in range(num_repeats):
-        # ---- Step 1 - Calculating the u_e ----
-        theta = (m_inv @ b) / (sigma * sigma)
-        # xMx = (df_feats.values @ m_inv @ df_feats.T.values).clip(min=0)
-
-        u_e = []
-        for i in range(num_edges_t):
-            x_e = df_feats.loc[i].values
-            xMx = x_e @ m_inv @ x_e.T  # .clip(min=0)
-            u_e.append(np.clip(x_e @ theta + c * np.sqrt(xMx), 0, 1))
-            # u_e.append(expit(x_e @ theta + c * np.sqrt(xMx)))
-
-        u_e = np.array(u_e)
-
-        # ---- Step 2 - Evaluating the performance ----
-        # Loss function
-        df["probab"] = u_e
-        s_oracle = sorted(
-            oracle(
-                df[["source", "target", "probab"]],
-                num_nodes_tim,
-                num_edges_t,
-                num_inf,
-                epsilon,
-            )
-        )
-
-        # Observing edge-level feedback
-        df["probab"] = true_weights
-
-        all_algo_nodes = []
-        all_algo_edges = []
-        all_algo_obs = []
-        for k in range(num_repeats_reward):
-            algo_act_nodes, algo_act_edges, algo_obs_edges = run_ic_eff(df, s_oracle)
-            all_algo_nodes.append(algo_act_nodes)
-            all_algo_edges.append(algo_act_edges)
-            all_algo_obs.append(algo_obs_edges)
-
-        # Mean node counts
-        mean_algo_nodes = np.mean([len(i) for i in all_algo_nodes])
-
-        # Used for updating M and b later
-        all_algo_edges = np.unique(np.concatenate(all_algo_edges))
-        all_algo_obs = np.unique(np.concatenate(all_algo_obs))
-
-        logger_tlu.debug(f"Algo   seeds: {s_oracle}")
-        logger_tlu.debug(f"Algo   reward: {mean_algo_nodes}")
-        logger_tlu.debug(f"Best algo reward: {reward_best}")
-        logger_tlu.debug(f"Algo weights {u_e[80:90]}".replace("\n", ""))
-        logger_tlu.debug(f"Real weights {true_weights[80:90]}".replace("\n", ""))
-
-        if mean_algo_nodes > reward_best:
-            reward_best = mean_algo_nodes
-            s_best = s_oracle
-            u_e_best = u_e
-
-        # ---- Step 3 - Calculating updates ----
-        for i in all_algo_obs:
-            x_e = np.array([df_feats.loc[i].values])
-            m_inv -= (m_inv @ x_e.T @ x_e @ m_inv) / (
-                x_e @ m_inv @ x_e.T + sigma * sigma
-            )
-            b += x_e.T * int(i in all_algo_edges)
-
-    return_dict = {"s_best": s_best, "u_e_best": u_e_best, "reward_best": reward_best}
     logger_tlu.debug("The algorithm has finished running.")
     logger_tlu.debug(f"Returning: {return_dict}")
     return return_dict
@@ -635,7 +559,7 @@ def oim_node2vec_parallel(
 # --------------------------------------------------------------------------------------
 
 
-def timlinucb_parallel(
+def timlinucb_parallel_oim(
     df_edges,
     df_feats,
     times,
@@ -648,28 +572,139 @@ def timlinucb_parallel(
     num_repeats_oim_reward=10,
     style="additive",
     process_id=1,
+    max_jobs=-2,
+    hide_tqdm=False,
 ):
+    # Parallel version doesn't support persistent parameters
     if "tim" not in os.listdir():
         logger_tlu.warning("Couldn't find TIM in the program directory")
         return False
 
-    tim_name = "tim_" + str(process_id)
-    temp_dir_name = tim_name + "_dir"
-    logger_tlu.debug(f"Name of the new TIM file: {tim_name}")
-    shutil.copyfile("tim", tim_name)
-    # Making the new tim file executable
-    st = os.stat(tim_name)
-    os.chmod(tim_name, st.st_mode | stat.S_IEXEC)
-    oracle = partial(tim_parallel, tim_file=tim_name, temp_dir=temp_dir_name)
+    # ------------------------- Setting up the parallel exec ---------------------------
+    logger_tlu.debug("Creating the extra TIM files...")
+    dir_names = []
+    tim_names = []
 
-    results = []
+    for oim_id in range(len(times)):
+        tim_name = f"tim_tlu_{process_id}_oim_{oim_id}"
+        dir_name = f"{tim_name}_dir"
+        logger_tlu.debug(f"Name of the new TIM file: {tim_name}")
+        shutil.copyfile("tim", tim_name)
+
+        # Making the new tim file executable
+        st = os.stat(tim_name)
+        os.chmod(tim_name, st.st_mode | stat.S_IEXEC)
+
+        tim_names.append(tim_name)
+        dir_names.append(dir_name)
+
+    setup_array = []
+
+    logger_tlu.debug("Calculating the setup dictionaries...")
+    i = 0  # Enumerate is too slow
+
     for t in times:
         if style == "additive":
             df_t = df_edges[df_edges["day"] <= t].sort_values("source").reset_index()
         elif style == "dynamic":
             df_t = df_edges[df_edges["day"] == t].sort_values("source").reset_index()
+
         df_feats_t = df_t["index"].apply(lambda x: df_feats.loc[x])
-        result_oim = oim_node2vec_parallel(
+
+        setup_array.append(
+            {
+                "function": oim_node2vec,
+                "time": t,
+                "args": [df_t, df_feats_t, nodes],
+                "kwargs": {
+                    "num_inf": num_seeds,
+                    "sigma": sigma,
+                    "c": c,
+                    "epsilon": epsilon,
+                    "num_repeats": num_repeats_oim,
+                    "num_repeats_reward": num_repeats_oim_reward,
+                    "oracle": partial(
+                        tim_parallel, tim_file=tim_names[i], temp_dir=dir_names[i]
+                    ),
+                    "hide_tqdm": True,
+                },
+            }
+        )
+        i += 1
+
+    # -------------------------- Strarting the parallel exec ---------------------------
+
+    logger_tlu.debug("Started the parallel execution...")
+    if hide_tqdm:
+        results_array = joblib.Parallel(n_jobs=max_jobs)(
+            joblib.delayed(_run_timlinucb_parallel)(setup_dict)
+            for setup_dict in setup_array
+        )
+    else:
+        with tqdm_joblib(tqdm(desc="TIMLinUCB (dynamic OIM)", total=len(times))):
+            results_array = joblib.Parallel(n_jobs=max_jobs)(
+                joblib.delayed(_run_timlinucb_parallel)(setup_dict)
+                for setup_dict in setup_array
+            )
+
+    # ----------------------------------- Cleaning up ----------------------------------
+    logger_tlu.debug(
+        f"Removing the new TIM files {tim_names} and the temp directories {dir_names}"
+    )
+    for tim_name, dir_name in zip(tim_names, dir_names):
+        os.remove(tim_name)
+        shutil.rmtree(dir_name)
+
+    return results_array
+
+
+def timlinucb_parallel_t(
+    df_edges,
+    df_feats,
+    times,
+    nodes,
+    num_seeds=5,
+    sigma=4,
+    c=0.1,
+    epsilon=0.4,
+    num_repeats_oim=10,
+    num_repeats_oim_reward=10,
+    style="additive",
+    process_id=1,
+    persist=False,
+):
+    if "tim" not in os.listdir():
+        logger_tlu.warning("Couldn't find TIM in the program directory")
+        return False
+
+    tim_name = f"tim_tlu_{process_id}"
+    dir_name = f"{tim_name}_dir"
+    logger_tlu.debug(f"Name of the new TIM file: {tim_name}")
+    shutil.copyfile("tim", tim_name)
+
+    # Making the new tim file executable
+    st = os.stat(tim_name)
+    os.chmod(tim_name, st.st_mode | stat.S_IEXEC)
+
+    results = []
+
+    # For persistent parameters - making the b and M matrices
+    if persist:
+        b = np.zeros((df_feats.shape[1], 1))
+        m_inv = np.eye(df_feats.shape[1], df_feats.shape[1])
+    else:
+        b = None
+        m_inv = None
+
+    for t in times:
+        if style == "additive":
+            df_t = df_edges[df_edges["day"] <= t].sort_values("source").reset_index()
+        elif style == "dynamic":
+            df_t = df_edges[df_edges["day"] == t].sort_values("source").reset_index()
+
+        df_feats_t = df_t["index"].apply(lambda x: df_feats.loc[x])
+
+        result_oim = oim_node2vec(
             df_t,
             df_feats_t,
             nodes,
@@ -679,16 +714,26 @@ def timlinucb_parallel(
             epsilon=epsilon,
             num_repeats=num_repeats_oim,
             num_repeats_reward=num_repeats_oim_reward,
-            oracle=oracle,
+            oracle=partial(tim_parallel, tim_file=tim_name, temp_dir=dir_name),
+            hide_tqdm=True,
+            persist=persist,
+            m_inv=m_inv,
+            b=b,
         )
+
         result_oim["time"] = t
+
+        if persist:
+            m_inv = result_oim.pop("m_inv")
+            b = result_oim.pop("b")
+
         results.append(result_oim)
 
     logger_tlu.debug(
-        f"Removing the new TIM file {tim_name} and the temp directory {temp_dir_name}"
+        f"Removing the new TIM files {tim_name} and the temp directories {dir_name}"
     )
     os.remove(tim_name)
-    shutil.rmtree(temp_dir_name)
+    shutil.rmtree(dir_name)
 
     return pd.DataFrame(results)
 
@@ -705,9 +750,25 @@ def timlinucb(
     num_repeats_oim=10,
     num_repeats_oim_reward=10,
     style="additive",
+    persist=False,
+    hide_tqdm=False,
 ):
     results = []
-    for t in tqdm(times, desc=f"TOIM iters", leave=False, file=sys.stderr,):
+    # For persistent parameters - making the b and M matrices
+    if persist:
+        b = np.zeros((df_feats.shape[1], 1))
+        m_inv = np.eye(df_feats.shape[1], df_feats.shape[1])
+    else:
+        b = None
+        m_inv = None
+
+    times_iter = (
+        times
+        if hide_tqdm
+        else tqdm(times, desc=f"TOIM iters", leave=False, file=sys.stderr)
+    )
+
+    for t in times_iter:
         if style == "additive":
             df_t = df_edges[df_edges["day"] <= t].sort_values("source").reset_index()
         elif style == "dynamic":
@@ -723,7 +784,13 @@ def timlinucb(
             epsilon=epsilon,
             num_repeats=num_repeats_oim,
             num_repeats_reward=num_repeats_oim_reward,
+            persist=persist,
+            m_inv=m_inv,
+            b=b,
         )
         result_oim["time"] = t
+        if persist:
+            m_inv = result_oim.pop("m_inv")
+            b = result_oim.pop("b")
         results.append(result_oim)
     return pd.DataFrame(results)

@@ -9,6 +9,9 @@ import os
 from copy import deepcopy
 import joblib
 import contextlib
+import shutil
+import stat
+import traceback
 from subprocess import Popen, PIPE
 
 
@@ -168,8 +171,8 @@ def tim_parallel(
 
 
 def tim_t(df_edges, nodes, times, num_seeds=5, num_repeats_reward=20, epsilon=0.4):
-    # TIM wants the max node ID
-    num_nodes = nodes[-1]
+    # TIM wants the max node ID ()
+    num_nodes = nodes[-1] + 1
     results = []
     for t in tqdm(times):
         df_t = df_edges[df_edges["day"] <= t]
@@ -180,6 +183,47 @@ def tim_t(df_edges, nodes, times, num_seeds=5, num_repeats_reward=20, epsilon=0.
             num_edges_t,
             num_seeds,
             epsilon,
+        )
+        results.append(
+            {
+                "time": t,
+                "reward": get_avg_reward(df_t, selected_seeds, num_repeats_reward),
+                "selected": selected_seeds,
+            }
+        )
+    return pd.DataFrame(results)
+
+
+def tim_t_parallel(
+    df_edges,
+    nodes,
+    times,
+    num_seeds=5,
+    num_repeats_reward=20,
+    epsilon=0.4,
+    process_id=1,
+):
+    tim_name = "tim_t_" + str(process_id)
+    temp_dir_name = tim_name + "_dir"
+    shutil.copyfile("tim", tim_name)
+    # Making the new tim file executable
+    st = os.stat(tim_name)
+    os.chmod(tim_name, st.st_mode | stat.S_IEXEC)
+
+    # TIM wants the max node ID, starting from 0
+    num_nodes = nodes[-1] + 1
+    results = []
+    for t in times:
+        df_t = df_edges[df_edges["day"] <= t]
+        num_edges_t = df_t.shape[0]
+        selected_seeds = tim_parallel(
+            df_t[["source", "target", "probab"]],
+            num_nodes,
+            num_edges_t,
+            num_seeds,
+            epsilon,
+            tim_name,
+            temp_dir_name,
         )
         results.append(
             {
@@ -209,3 +253,26 @@ def tqdm_joblib(tqdm_object):
     finally:
         joblib.parallel.Parallel.print_progress = original_print_progress
         tqdm_object.close()
+
+
+def run_algorithm(setup_dict):
+    try:
+        result_dict = {
+            "result": setup_dict.get("function")(
+                *setup_dict.get("args"), **setup_dict.get("kwargs")
+            ),
+            "algo_name": setup_dict.get("algo_name"),
+            "kwargs": setup_dict.get("kwargs"),
+        }
+    except Exception as e:
+        print(e)
+        print(setup_dict)
+        traceback.print_exc()
+        return {}
+    return result_dict
+
+
+def _run_timlinucb_parallel(setup_dict):
+    result = setup_dict["function"](*setup_dict["args"], **setup_dict["kwargs"])
+    result["time"] = setup_dict["time"]
+    return result
