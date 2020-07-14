@@ -285,3 +285,6 @@ temp_dir/*
 tim*dir
 tim_*
 eps*/
+
+# Virtual env
+venv/*
