@@ -1,5 +1,7 @@
 # TIMLinUCB
 
+[![DOI](https://zenodo.org/badge/256289048.svg)](https://zenodo.org/badge/latestdoi/256289048)
+
 TIMLinUCB - an algorithm for Online Influence Maximization in Temporal Networks.
 
 ## What?
