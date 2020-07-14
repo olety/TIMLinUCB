@@ -22,7 +22,13 @@ from subprocess import Popen, PIPE
 @contextlib.contextmanager
 def tqdm_joblib(tqdm_object):
     # Taken from https://stackoverflow.com/questions/24983493/tracking-progress-of-joblib-parallel-execution/41815007
-    """Context manager to patch joblib to report into tqdm progress bar given as argument"""
+    """Context manager to patch joblib to report into tqdm progress bar given as argument
+
+    Parameters
+    ----------
+    tqdm_object : Object
+        The tqdm object to paralellize
+    """
 
     def tqdm_print_progress(self):
         if self.n_completed_tasks > tqdm_object.n:
@@ -273,11 +279,36 @@ def tim(
     temp_dir="temp_dir",
     out_pattern=re.compile("Selected k SeedSet: (.+?) \\n"),
 ):
-    """ Runs TIM (the oracle function).
-    Input: df -- the graph to process
-    num_inf -- the k the we are looking for
-    epsilon -- hyperparameter
-    Output: T -- The k highest influencers
+    """ Run the Offline IM algorithm, TIM
+
+    Parameters
+    ----------
+    df : pandas.DataFrame
+        The graph we run the TIM on, in the form of a DataFrame. A row represents one
+        edge in the graph, with columns being named "source", "target", "probab".
+        "probab" column contains the activation probability.
+    num_nodes : int
+        Number of nodes to pass into TIM.
+    num_edges : int
+        Number of edges to pass into TIM.
+    num_inf : int
+        Number of seed nodes to find.
+    epsilon : float
+        A hyperparameter for TIM. Refer to the paper for more details. [1]
+    temp_dir : str, optional
+        A temporary directory to run TIM in. Default: "temp_dir"
+    out_pattern : re.Pattern, optional
+        Regex pattern that gets the TIM results out of its output.
+        Default: re.compile("Selected k SeedSet: (.+?) \\n"),
+
+    Returns
+    -------
+    seeds : list
+        A set of seed nodes that maximizes influence found by TIM
+
+    .. [1] Tang, Youze, Xiaokui Xiao, and Yanchen Shi.
+    "Influence maximization: Near-optimal time complexity meets practical efficiency."
+    Proceedings of the 2014 ACM SIGMOD international conference on Management of data. 2014.
     """
     if not os.path.exists(temp_dir):
         os.makedirs(temp_dir)
@@ -317,15 +348,44 @@ def tim_parallel(
     num_edges,
     num_inf,
     epsilon,
-    tim_file="./tim",
+    tim_file="tim",
     temp_dir="temp_dir",
     out_pattern=re.compile("Selected k SeedSet: (.+?) \\n"),
 ):
-    """ Runs TIM (the oracle function).
-    Input: df -- the graph to process
-    num_inf -- the k the we are looking for
-    epsilon -- hyperparameter
-    Output: T -- The k highest influencers
+    """ Run the Offline IM algorithm, TIM, in parallel
+
+    Parameters
+    ----------
+    df : pandas.DataFrame
+        The graph we run the TIM on, in the form of a DataFrame. A row represents one
+        edge in the graph, with columns being named "source", "target", "probab".
+        "probab" column contains the activation probability.
+    num_nodes : int
+        Number of nodes to pass into TIM.
+    num_edges : int
+        Number of edges to pass into TIM.
+    num_inf : int
+        Number of seed nodes to find.
+    epsilon : float
+        A hyperparameter for TIM. Refer to the paper for more details. [1]
+    temp_dir : str, optional
+        A temporary directory to run TIM in. Default: "temp_dir"
+    tim_file : str, optional
+        A path to the TIM executionable that we are going to use. This parameter
+        is added due to the parallel processing requiring creating more TIM files
+        to not hog it. Default: "tim"
+    out_pattern : re.Pattern, optional
+        Regex pattern that gets the TIM results out of its output.
+        Default: re.compile("Selected k SeedSet: (.+?) \\n"),
+
+    Returns
+    -------
+    seeds : list
+        A set of seed nodes that maximizes influence found by TIM
+
+    .. [1] Tang, Youze, Xiaokui Xiao, and Yanchen Shi.
+    "Influence maximization: Near-optimal time complexity meets practical efficiency."
+    Proceedings of the 2014 ACM SIGMOD international conference on Management of data. 2014.
     """
     if not os.path.exists(temp_dir):
         os.makedirs(temp_dir)
@@ -360,6 +420,40 @@ def tim_parallel(
 
 
 def tim_t(df_edges, nodes, times, num_seeds=5, num_repeats_reward=20, epsilon=0.4):
+    """ Run the Offline IM algorithm, TIM, on every time step in a network
+
+    Parameters
+    ----------
+    df_edges : pandas.DataFrame
+        The graph we run the TIM on, in the form of a DataFrame. A row represents one
+        edge in the graph, with columns being named "source", "target", "probab" and
+        "day". "probab" column contains the activation probability and "day" should
+        correspond to the days specified in times.
+    nodes : pandas.Series, list
+        A sorted list of all unique node ids in the graph.
+    times : pd.Series, list
+        A list representing the times that we want to run the algorithm on. Is useful
+        if we don't want to run TIM on every single time step in the graph.
+    num_seeds : int, optional
+        Number of seed nodes to find. Default: 5
+    num_repeats_reward : int, optional
+        Number of times we will try propagating the obtained seed nodes using the IC
+        model to get the reward. The reward is then averaged over the runs. Default: 20
+    epsilon : float, optional
+        A hyperparameter for TIM. Refer to the paper for more details. [1]
+
+    Returns
+    -------
+    results : pd.DataFrame
+        A dataframe with the following columns
+        * time, representing the time step of the result
+        * reward, an average reward obtained over num_repeats_reward runs
+        * selected, a list of selected seed nodes
+
+    .. [1] Tang, Youze, Xiaokui Xiao, and Yanchen Shi.
+    "Influence maximization: Near-optimal time complexity meets practical efficiency."
+    Proceedings of the 2014 ACM SIGMOD international conference on Management of data. 2014.
+    """
     # TIM wants the max node ID ()
     num_nodes = nodes[-1] + 1
     results = []
@@ -392,6 +486,43 @@ def tim_t_parallel(
     epsilon=0.4,
     process_id=1,
 ):
+    """ Run the Offline IM algorithm, TIM, on every time step in a network in parallel
+
+    Parameters
+    ----------
+    df_edges : pandas.DataFrame
+        The graph we run the TIM on, in the form of a DataFrame. A row represents one
+        edge in the graph, with columns being named "source", "target", "probab" and
+        "day". "probab" column contains the activation probability and "day" should
+        correspond to the days specified in times.
+    nodes : pandas.Series, list
+        A sorted list of all unique node ids in the graph.
+    times : pd.Series, list
+        A list representing the times that we want to run the algorithm on. Is useful
+        if we don't want to run TIM on every single time step in the graph.
+    num_seeds : int, optional
+        Number of seed nodes to find. Default: 5
+    num_repeats_reward : int, optional
+        Number of times we will try propagating the obtained seed nodes using the IC
+        model to get the reward. The reward is then averaged over the runs. Default: 20
+    epsilon : float, optional
+        A hyperparameter for TIM. Refer to the paper for more details. [1] Default: 0.4
+    process_id : int or str, optional
+        An identifier used in distinguishing the temporary TIM executable from others.
+        Default: 1
+
+    Returns
+    -------
+    results : pd.DataFrame
+        A dataframe with the following columns
+        * time, representing the time step of the result
+        * reward, an average reward obtained over num_repeats_reward runs
+        * selected, a list of selected seed nodes
+
+    .. [1] Tang, Youze, Xiaokui Xiao, and Yanchen Shi.
+    "Influence maximization: Near-optimal time complexity meets practical efficiency."
+    Proceedings of the 2014 ACM SIGMOD international conference on Management of data. 2014.
+    """
     tim_name = "tim_t_" + str(process_id)
     temp_dir_name = tim_name + "_dir"
     shutil.copyfile("tim", tim_name)
