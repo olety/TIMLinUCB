@@ -151,7 +151,7 @@ def generate_node2vec_fetures(
 ):
     """ Generate node2vec features for the edges in a graph
 
-    Runs get_features_nodes to get the node2vec features for the nodes and then
+    Runs get_features_nodes to get the node2vec[1] features for the nodes and then
     multiplies them to get the edge features.
     Edge feature vector Fe = source_node_feats * target_node_feats.
 
@@ -1136,7 +1136,7 @@ def timlinucb_parallel_oim(
         os.remove(tim_name)
         shutil.rmtree(dir_name)
 
-    return results_array
+    return pd.DataFrame(results_array)
 
 
 def timlinucb_parallel_t(
