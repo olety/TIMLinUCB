@@ -95,7 +95,7 @@ def rsb(
     C=1.0,
     gamma=0.2,
     num_repeats_expect=25,
-    persist_params=True,
+    # persist_params=True,
     style="additive",
     hide_tqdm=False,
 ):
@@ -125,8 +125,6 @@ def rsb(
         more details. [1] Default: 0.2
     num_repeats_expect : int, optional
         Default: 25
-    persist_params : boolean, optional
-        Determines if we want to persist the OIM parameters. Default: False
     style : str, optional
         Determines whether we take into account all edges up to t ("additive") or just
         the ones that were formed at t ("dynamic"). Default: "additive"
@@ -216,11 +214,11 @@ def rsb(
                 f"weight_{cur_seed}"
             ] * np.exp((gamma * df_weights_t["expected_gain"]) / (num_nodes * C))
 
-        if persist_params:
-            df_weights.loc[df_weights_t.index] = np.nan
-            df_weights = df_weights.combine_first(df_weights_t)
-        reward, std = get_stats_reward(df_t, selected, num_repeats_expect)
-        results.append(
-            {"time": t, "reward": reward, "std": std, "selected": selected,}
-        )
+        # if persist_params:
+        #     df_weights.loc[df_weights_t.index] = np.nan
+        #     df_weights = df_weights.combine_first(df_weights_t)
+        # reward, std = get_stats_reward(df_t, selected, num_repeats_expect)
+        # results.append(
+        #     {"time": t, "reward": reward, "std": std, "selected": selected,}
+        # )
     return pd.DataFrame(results)
