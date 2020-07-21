@@ -214,11 +214,6 @@ def rsb(
                 f"weight_{cur_seed}"
             ] * np.exp((gamma * df_weights_t["expected_gain"]) / (num_nodes * C))
 
-        # if persist_params:
-        #     df_weights.loc[df_weights_t.index] = np.nan
-        #     df_weights = df_weights.combine_first(df_weights_t)
-        # reward, std = get_stats_reward(df_t, selected, num_repeats_expect)
-        # results.append(
-        #     {"time": t, "reward": reward, "std": std, "selected": selected,}
-        # )
+        reward, std = get_stats_reward(df_t, selected, num_repeats_expect)
+        results.append({"time": t, "reward": reward, "std": std, "selected": selected})
     return pd.DataFrame(results)
