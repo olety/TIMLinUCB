@@ -1158,7 +1158,7 @@ def timlinucb_parallel_oim(
     logger_tlu.debug(
         f"Removing the new TIM files {tim_names} and the temp directories {dir_names}"
     )
-    for tim_name, dir_name in zip(tim_names, dir_names):
+    for tim_name, dir_name in sorted(zip(tim_names, dir_names)):
         os.remove(tim_name)
         shutil.rmtree(dir_name)
 
