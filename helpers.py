@@ -480,6 +480,204 @@ def tim_t(df_edges, nodes, times, num_seeds=5, num_repeats_reward=20, epsilon=0.
     return pd.DataFrame(results)
 
 
+def _tim_t_parallel_run(
+    df,
+    num_nodes,
+    num_edges,
+    num_inf,
+    epsilon,
+    tim_file="tim",
+    temp_dir="temp_dir",
+    num_repeats_reward=10,
+    out_pattern=re.compile("Selected k SeedSet: (.+?) \\n"),
+):
+    """ Run the Offline IM algorithm, TIM, in parallel
+
+    Parameters
+    ----------
+    df : pandas.DataFrame
+        The graph we run the TIM on, in the form of a DataFrame. A row represents one
+        edge in the graph, with columns being named "source", "target", "probab".
+        "probab" column contains the activation probability.
+    num_nodes : int
+        Number of nodes to pass into TIM.
+    num_edges : int
+        Number of edges to pass into TIM.
+    num_inf : int
+        Number of seed nodes to find.
+    epsilon : float
+        A hyperparameter for TIM. Refer to the paper for more details. [1]
+    temp_dir : str, optional
+        A temporary directory to run TIM in. Default: "temp_dir"
+    tim_file : str, optional
+        A path to the TIM executionable that we are going to use. This parameter
+        is added due to the parallel processing requiring creating more TIM files
+        to not hog it. Default: "tim"
+    out_pattern : re.Pattern, optional
+        Regex pattern that gets the TIM results out of its output.
+        Default: re.compile("Selected k SeedSet: (.+?) \\n"),
+
+    References
+    ----------
+    .. [1] Tang, Youze, Xiaokui Xiao, and Yanchen Shi.
+        "Influence maximization: Near-optimal time complexity meets practical efficiency."
+        Proceedings of the 2014 ACM SIGMOD international conference on Management of data. 2014.
+    """
+    if not os.path.exists(temp_dir):
+        os.makedirs(temp_dir)
+
+    df.to_csv(
+        os.path.join(temp_dir, "graph_ic.inf"), index=False, sep=" ", header=False
+    )
+    # Preparing to run TIM
+    with open(os.path.join(temp_dir, "attribute.txt"), "w+") as f:
+        f.write(f"n={num_nodes}\nm={num_edges}")
+
+    process = Popen(
+        [
+            f"./{tim_file}",
+            "-model",
+            "IC",
+            "-dataset",
+            f"{temp_dir}",
+            "-k",
+            f"{num_inf}",
+            "-epsilon",
+            f"{epsilon}",
+        ],
+        stdout=PIPE,
+        stderr=PIPE,
+    )
+    (output, err) = process.communicate()
+    _ = process.wait()  # Returns exit code
+    out = output.decode("utf-8")
+    # print(f"Running TIM, {out}")
+    selected_seeds = list(map(int, out_pattern.findall(out)[0].split(" ")))
+    reward, std = get_stats_reward(df, selected_seeds, num_repeats_reward)
+    return {"reward": reward, "std": std, "selected": selected_seeds}
+
+
+def tim_t_parallel_run(
+    df_edges,
+    nodes,
+    times,
+    num_seeds=5,
+    num_repeats_reward=20,
+    epsilon=0.4,
+    process_id=1,
+    max_jobs=-2,
+    hide_tqdm=True,
+):
+    """ Run the Offline IM algorithm, TIM, on every time step in a network in parallel
+
+    As opposed to tim_t_parallel that is designed to be a part of the parallel pipeline,
+    tim_t_parallel_run executes TIM in a parallel fashion.
+
+    Parameters
+    ----------
+    df_edges : pandas.DataFrame
+        The graph we run the TIM on, in the form of a DataFrame. A row represents one
+        edge in the graph, with columns being named "source", "target", "probab" and
+        "day". "probab" column contains the activation probability and "day" should
+        correspond to the days specified in times.
+    nodes : pandas.Series, list
+        A sorted list of all unique node ids in the graph.
+    times : pd.Series, list
+        A list representing the times that we want to run the algorithm on. Is useful
+        if we don't want to run TIM on every single time step in the graph.
+    num_seeds : int, optional
+        Number of seed nodes to find. Default: 5
+    num_repeats_reward : int, optional
+        Number of times we will try propagating the obtained seed nodes using the IC
+        model to get the reward. The reward is then averaged over the runs. Default: 20
+    epsilon : float, optional
+        A hyperparameter for TIM. Refer to the paper for more details. [1] Default: 0.4
+    process_id : int or str, optional
+        An identifier used in distinguishing the temporary TIM executable from others.
+        Default: 1
+
+    Returns
+    -------
+    results : pd.DataFrame
+        A dataframe with the following columns
+        * time, representing the time step of the result
+        * reward, an average reward obtained over num_repeats_reward runs
+        * selected, a list of selected seed nodes
+
+    References
+    ----------
+    .. [1] Tang, Youze, Xiaokui Xiao, and Yanchen Shi.
+        "Influence maximization: Near-optimal time complexity meets practical efficiency."
+        Proceedings of the 2014 ACM SIGMOD international conference on Management of data. 2014.
+    """
+    dir_names = []
+    tim_names = []
+
+    for time_id in range(len(times)):
+        tim_name = f"tim_tpar_{process_id}_time_{time_id}"
+        dir_name = f"{tim_name}_dir"
+        shutil.copyfile("tim", tim_name)
+
+        # Making the new tim file executable
+        st = os.stat(tim_name)
+        os.chmod(tim_name, st.st_mode | stat.S_IEXEC)
+
+        tim_names.append(tim_name)
+        dir_names.append(dir_name)
+
+    setup_array = []
+    # TIM wants the max node ID, starting from 0
+    num_nodes = nodes[-1] + 1
+    i = 0
+
+    if hide_tqdm:
+        times_it = times
+    else:
+        times_it = tqdm(times, desc="Preprocessing the features for t")
+
+    for t in times_it:
+        df_t = df_edges[df_edges["day"] <= t].sort_values("source").reset_index()
+        num_edges_t = df_t.shape[0]
+
+        setup_array.append(
+            {
+                "function": _tim_t_parallel_run,
+                "time": t,
+                "args": [
+                    df_t[["source", "target", "probab"]],
+                    num_nodes,
+                    num_edges_t,
+                    num_seeds,
+                    epsilon,
+                ],
+                "kwargs": {
+                    "tim_file": tim_names[i],
+                    "temp_dir": dir_names[i],
+                    "num_repeats_reward": num_repeats_reward,
+                },
+            }
+        )
+        i += 1
+
+    if hide_tqdm:
+        results_array = joblib.Parallel(n_jobs=max_jobs)(
+            joblib.delayed(_run_timlinucb_parallel)(setup_dict)
+            for setup_dict in setup_array
+        )
+    else:
+        with tqdm_joblib(tqdm(desc="TIM_T (dynamic OIM)", total=len(times))):
+            results_array = joblib.Parallel(n_jobs=max_jobs)(
+                joblib.delayed(_run_timlinucb_parallel)(setup_dict)
+                for setup_dict in setup_array
+            )
+
+    for tim_name, dir_name in zip(tim_names, dir_names):
+        os.remove(tim_name)
+        shutil.rmtree(dir_name)
+
+    return pd.DataFrame(results_array)
+
+
 def tim_t_parallel(
     df_edges,
     nodes,
