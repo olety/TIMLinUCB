@@ -11,9 +11,11 @@ An effective way of finding the most influential nodes in a temporal network wit
 
 ## Why?
 
-The current (2020) literature is focused on analyzing static networks as well as temporal networks in cases where we know the "activation probability" of a node X transferring some information to the node Y. The only algorithm designed specifically for the case of Online IM in Temporal Networks is RSB. This work aims to change this by introducing TIMLinUCB - a temporal adaptation of a state-of-the-art Online IM algorithm for Static networks.
+The current (2020) Influence Maximization literature is mainly focused on analyzing static networks as well as temporal networks in cases where we know the "activation probability" of a node X transferring some information to the node Y. 
 
 ![](pictures/comparison_table.png)
+
+As you can see from the diagram above, the only algorithm designed specifically for the case of Online IM in Temporal Networks is RSB. This work aims to change this by introducing TIMLinUCB - a temporal adaptation of a state-of-the-art Online IM algorithm for Static networks.
 
 ## TIMLinUCB
 
