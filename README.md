@@ -48,13 +48,13 @@ At the same, we might want to run multiple TIMLinUCB sessions in parallel if we 
 
 RSB by Bao, Yixin, et al. (referenced below) is also an algorithm designed to perform Online IM in Temporal Networks. While TIMLinUCB is based on an OIM algorithm, RSB was designed specifically for Temporal Networks, which makes it a good "sparring partner".
 
-You can see the comparison between TIMLinUCB and RSB in the pictures below. We used the Facebook dataset fb-wosn-friends and a seed set of 100 nodes.
-As you can see, TIMLinUCB is better at actually finding the best seed node set but takes more time than RSB to execute, even if we are running the parallel version of TIMLinUCB. You can find more comparison charts in the thesis introducing TIMLinUCB.
-
 <p align="center">
 <img src="pictures/rsb_eff_100.png" alt="Online Influence Maximization algorithm" width="650" /><br/>
 <sup>TIMLinUCB vs RSB: Efficacy (influence gathered), 100 seed nodes, FB dataset</sup>
 </p>
+
+You can see the comparison between TIMLinUCB and RSB in the pictures above and below. We used the Facebook dataset "fb-wosn-friends" and a seed set of 100 nodes.
+As you can see, TIMLinUCB is better at actually finding the best seed node set but takes more time than RSB to execute, even if we are running the parallel version of TIMLinUCB. You can find more comparison charts in the [thesis introducing TIMLinUCB](https://github.com/olety/TIMLinUCB/blob/master/thesis/TIMLinUCB.pdf).
 
 <p align="center">
 <img src="pictures/rsb_perf.png" alt="Online Influence Maximization algorithm" height="350" /><br/>
