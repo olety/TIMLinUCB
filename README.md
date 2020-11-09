@@ -1,9 +1,7 @@
-# TIMLinUCB
+# TIMLinUCB - an algorithm for Online Influence Maximization in Temporal Networks.
 
 [![DOI](https://zenodo.org/badge/256289048.svg)](https://zenodo.org/badge/latestdoi/256289048)
 [![Documentation Status](https://readthedocs.org/projects/timlinucb/badge/?version=latest)](https://timlinucb.readthedocs.io/en/latest/?badge=latest)
-
-TIMLinUCB - an algorithm for Online Influence Maximization in Temporal Networks.
 
 ## What?
 
